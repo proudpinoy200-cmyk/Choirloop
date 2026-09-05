@@ -1,0 +1,9 @@
+{
+    "functions": {
+          "api/generate-image.js": { "maxDuration": 60 },
+      "api/generate-song.js": { "maxDuration": 30 },
+      "api/song-status.js": { "maxDuration": 30 },
+      "api/transcribe-song.js": { "maxDuration": 60 },
+      "api/agent-reply.js": { "maxDuration": 30 }
+    }
+}
