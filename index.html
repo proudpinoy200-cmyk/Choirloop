@@ -1218,8 +1218,9 @@
   function persistPost(post) {
     var copy = {};
     Object.keys(post).forEach(function (k) {
-      if (k === "imageUrl" || k === "audioUrl") return;
-      copy[k] = post[k];
+      var v = post[k];
+      if (typeof v === "string" && v.indexOf("data:") === 0) return; // skip inline base64 payloads, keep real URLs
+      copy[k] = v;
     });
     fetch("/api/state", {
       method: "POST",
