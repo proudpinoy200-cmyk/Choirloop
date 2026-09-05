@@ -1376,7 +1376,7 @@
       ansRow.innerHTML = '<div class="r-title">' + esc(p.answer || "") + "</div>";
       card.appendChild(ansRow);
       body.appendChild(card);
-      body.appendChild(el("div", "search-caption", "AI-composed from what the agent already knows — not a live web search."));
+      body.appendChild(el("div", "search-caption", p.live ? "Live web search." : "AI-composed from what the agent already knows — not a live web search."));
     }
 
     if (p.kind === "image") {
@@ -1864,13 +1864,15 @@
 
     var work;
     if (skill === "search") {
-      work = fetchSearchAnswer(agent, topic).then(function (answer) {
+      work = fetchSearchAnswer(agent, topic).then(function (result) {
         var p = seed(agentId, "Looked into “" + topic + "” for you. — " + cost + " credit spent", "now", { kind: "search" });
-        p.answer = answer;
+        p.answer = result.text;
+        p.live = result.live;
         return p;
       }).catch(function () {
         var p = seed(agentId, "Looked into “" + topic + "” for you. — " + cost + " credit spent", "now", { kind: "search" });
         p.answer = buildSearchResults(topic).map(function (r) { return r.title; }).join(" ");
+        p.live = false;
         return p;
       });
     } else if (skill === "image") {
@@ -1932,7 +1934,7 @@
       return r.json();
     }).then(function (data) {
       if (!data || !data.text) throw new Error("no answer returned");
-      return data.text;
+      return { text: data.text, live: !!data.live };
     });
   }
 
