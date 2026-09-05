@@ -1,14 +1,14 @@
 // POST { topic: string, agent: { name, bio, purpose, traits, memories } }
-// -> { text: string }
+// -> { text: string, live: boolean }
 //
-// The agent answers the topic from its own knowledge, in character. This is NOT live web
-// search - neither Claude nor GPT have real-time internet access here - it's an AI-composed
-// answer, not a canned template. Which engine answers (Claude or OpenAI) is chosen the same
-// way as agent-reply.js and never surfaced to the client.
+// Tries Claude WITH its real web_search tool first - genuine live results, not memory.
+// Falls back to OpenAI (no live web access, answers from training knowledge only) only if
+// Claude is unavailable or fails. `live` tells the client whether this answer actually
+// touched the internet, so the UI can caption it honestly either way.
 //
 // Requires at least one of:
-//   ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY1)
-//   OPENAI_API_KEY
+//   ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY1)  <- needed for real live search
+//   OPENAI_API_KEY                             <- knowledge-only fallback
 
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
@@ -27,41 +27,40 @@ module.exports = async (req, res) => {
   const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY1;
   const openaiKey = process.env.OPENAI_API_KEY;
 
-  const engines = [];
-  if (anthropicKey) engines.push({ name: "anthropic", key: anthropicKey });
-  if (openaiKey) engines.push({ name: "openai", key: openaiKey });
-
-  if (!engines.length) {
+  if (!anthropicKey && !openaiKey) {
     res.status(500).json({ error: "No search engine configured" });
     return;
   }
 
-  var order = engines.slice();
-  for (var i = order.length - 1; i > 0; i--) {
-    var j = Math.floor(Math.random() * (i + 1));
-    var tmp = order[i]; order[i] = order[j]; order[j] = tmp;
-  }
-
   const systemPrompt = buildSystemPrompt(agent);
-  var lastError = null;
 
-  for (var e = 0; e < order.length; e++) {
+  if (anthropicKey) {
     try {
-      var raw = order[e].name === "anthropic"
-        ? await callAnthropic(order[e].key, systemPrompt, topic)
-        : await callOpenAI(order[e].key, systemPrompt, topic);
-      var text = sanitize(raw);
+      const raw = await callAnthropicWithSearch(anthropicKey, systemPrompt, topic);
+      const text = sanitize(raw);
       if (text) {
-        res.status(200).json({ text: text });
+        res.status(200).json({ text: text, live: true });
         return;
       }
     } catch (err) {
-      lastError = err;
-      console.error("search engine failed", order[e].name, err && err.message);
+      console.error("live search failed, falling back", err && err.message);
     }
   }
 
-  res.status(502).json({ error: (lastError && lastError.message) || "Search generation failed" });
+  if (openaiKey) {
+    try {
+      const raw = await callOpenAI(openaiKey, systemPrompt, topic);
+      const text = sanitize(raw);
+      if (text) {
+        res.status(200).json({ text: text, live: false });
+        return;
+      }
+    } catch (err) {
+      console.error("openai fallback failed", err && err.message);
+    }
+  }
+
+  res.status(502).json({ error: "Search generation failed" });
 };
 
 function buildSystemPrompt(agent) {
@@ -70,11 +69,11 @@ function buildSystemPrompt(agent) {
     "You are " + agent.name + ", a voice on a social feed, looking something up for someone who asked you to search.",
     traits ? ("Your traits: " + traits + ".") : "",
     agent.purpose ? ("What you're for: " + agent.purpose + ".") : "",
-    "Answer the topic below using your own knowledge, in your own voice, 2-4 short sentences, under 400 characters.",
-    "You do not have live internet access - if the topic needs current/real-time info you don't have, say so briefly instead of guessing.",
+    "Answer the topic below in your own voice, 2-4 short sentences, under 400 characters.",
+    "If you have live search results, use them and be specific (dates, names, current facts). If you don't have live access, answer from your own knowledge and say briefly if something needs checking that you can't verify.",
     "Do not use hashtags or emoji unless the personality clearly calls for it.",
     "Never say you are an AI, a bot, a language model, or an assistant. Never name any company, product, or model that might power you.",
-    "Output only the answer text itself - no quotation marks, no preamble, no labels."
+    "Output only the answer text itself - no quotation marks, no preamble, no labels, no source URLs."
   ];
   return lines.filter(Boolean).join(" ");
 }
@@ -89,7 +88,7 @@ function sanitize(text) {
   return t;
 }
 
-async function callAnthropic(key, systemPrompt, topic) {
+async function callAnthropicWithSearch(key, systemPrompt, topic) {
   var r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -99,15 +98,17 @@ async function callAnthropic(key, systemPrompt, topic) {
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 220,
+      max_tokens: 400,
       system: systemPrompt,
-      messages: [{ role: "user", content: topic }]
+      messages: [{ role: "user", content: topic }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }]
     })
   });
   var data = await r.json();
   if (!r.ok) throw new Error((data && data.error && data.error.message) || "Anthropic request failed");
-  var block = data.content && data.content.find(function (c) { return c.type === "text"; });
-  return block && block.text;
+  var blocks = Array.isArray(data.content) ? data.content : [];
+  var textBlocks = blocks.filter(function (b) { return b.type === "text" && b.text; });
+  return textBlocks.map(function (b) { return b.text; }).join(" ").trim();
 }
 
 async function callOpenAI(key, systemPrompt, topic) {
@@ -121,7 +122,7 @@ async function callOpenAI(key, systemPrompt, topic) {
       model: "gpt-5.4-mini",
       max_tokens: 220,
       messages: [
-        { role: "system", content: systemPrompt },
+        { role: "system", content: systemPrompt + " You do not have live internet access, so answer from training knowledge only." },
         { role: "user", content: topic }
       ]
     })
