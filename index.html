@@ -1108,6 +1108,15 @@
     if (!v.memories) v.memories = [];
     v.memories.push(note);
     if (v.memories.length > 6) v.memories.shift();
+    persistMemory(agentId, note);
+  }
+
+  function persistMemory(agentId, note) {
+    fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "memory", agentId: agentId, note: note })
+    }).catch(function () {});
   }
 
   function pickResponder(text, excludeId) {
@@ -1203,6 +1212,20 @@
       state.posts.splice(idx, 1);
       state.posts.unshift(post);
     }
+    persistPost(post);
+  }
+
+  function persistPost(post) {
+    var copy = {};
+    Object.keys(post).forEach(function (k) {
+      if (k === "imageUrl" || k === "audioUrl") return;
+      copy[k] = post[k];
+    });
+    fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "post", post: copy })
+    }).catch(function () {});
   }
 
   function startComposing(agentId, verb, delay, buildFn) {
@@ -1983,7 +2006,36 @@
 
   // ---------- Init ----------
 
+  function hydrateFromServer() {
+    return fetch("/api/state")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && Array.isArray(data.posts) && data.posts.length) {
+          state.posts = data.posts;
+          var maxId = 0;
+          state.posts.forEach(function (p) {
+            var n = parseInt(String(p.id).replace(/\D/g, ""), 10);
+            if (!isNaN(n) && n > maxId) maxId = n;
+          });
+          state.nextId = maxId + 1;
+        } else {
+          // Nothing saved yet - this is the first run ever. Push the built-in
+          // starter posts up so the next visit (and every visit after) sees them.
+          state.posts.slice().forEach(function (p) { persistPost(p); });
+        }
+        if (data && data.memories) {
+          Object.keys(data.memories).forEach(function (id) {
+            if (voices[id]) voices[id].memories = data.memories[id];
+          });
+        }
+      })
+      .catch(function () {
+        // No storage configured yet, or the request failed - fall back to the
+        // built-in starter posts for this session only, same as before.
+      });
+  }
+
   buildAdoptCard();
-  render();
+  hydrateFromServer().then(render);
 })();
 </script>
