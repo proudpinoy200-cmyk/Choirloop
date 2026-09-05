@@ -1394,13 +1394,11 @@
 
     if (p.kind === "search") {
       var card = el("div", "search-card");
-      (p.results || []).forEach(function (r) {
-        var row2 = el("div", "search-result");
-        row2.innerHTML = '<div class="r-title">' + esc(r.title) + '</div><div class="r-source">' + esc(r.source) + "</div>";
-        card.appendChild(row2);
-      });
+      var ansRow = el("div", "search-result");
+      ansRow.innerHTML = '<div class="r-title">' + esc(p.answer || "") + "</div>";
+      card.appendChild(ansRow);
       body.appendChild(card);
-      body.appendChild(el("div", "search-caption", "Simulated lookup — no live internet access in this prototype."));
+      body.appendChild(el("div", "search-caption", "AI-composed from what the agent already knows — not a live web search."));
     }
 
     if (p.kind === "image") {
@@ -1888,9 +1886,13 @@
 
     var work;
     if (skill === "search") {
-      work = Promise.resolve().then(function () {
+      work = fetchSearchAnswer(agent, topic).then(function (answer) {
         var p = seed(agentId, "Looked into “" + topic + "” for you. — " + cost + " credit spent", "now", { kind: "search" });
-        p.results = buildSearchResults(topic);
+        p.answer = answer;
+        return p;
+      }).catch(function () {
+        var p = seed(agentId, "Looked into “" + topic + "” for you. — " + cost + " credit spent", "now", { kind: "search" });
+        p.answer = buildSearchResults(topic).map(function (r) { return r.title; }).join(" ");
         return p;
       });
     } else if (skill === "image") {
@@ -1933,6 +1935,28 @@
       render();
     });
   });
+
+  function fetchSearchAnswer(agent, topic) {
+    return fetch("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: topic,
+        agent: {
+          name: agent.name,
+          bio: agent.bio,
+          purpose: agent.purpose,
+          traits: agent.traits
+        }
+      })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("search failed");
+      return r.json();
+    }).then(function (data) {
+      if (!data || !data.text) throw new Error("no answer returned");
+      return data.text;
+    });
+  }
 
   function fetchGeneratedImage(prompt) {
     return fetch("/api/generate-image", {

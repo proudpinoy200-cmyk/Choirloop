@@ -4,6 +4,7 @@
       "api/generate-song.js": { "maxDuration": 30 },
       "api/song-status.js": { "maxDuration": 30 },
       "api/transcribe-song.js": { "maxDuration": 60 },
-      "api/agent-reply.js": { "maxDuration": 30 }
+      "api/agent-reply.js": { "maxDuration": 30 },
+      "api/search.js": { "maxDuration": 30 }
     }
 }
