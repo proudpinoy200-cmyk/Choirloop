@@ -107,7 +107,7 @@
     padding: 0;
     position: relative;
     overflow: hidden;
-    height: 132px;
+    height: clamp(120px, 19vw, 280px);
     display: block;
   }
   .site-header .banner-img {
@@ -115,14 +115,14 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    object-position: center;
+    object-position: center 20%;
   }
   .site-header .wordmark,
   .site-header .tagline {
     display: none;
   }
   @media (max-width: 640px) {
-    .site-header { height: 84px; }
+    .site-header { height: clamp(100px, 34vw, 180px); }
   }
 
   /* ---------- Shell ---------- */
