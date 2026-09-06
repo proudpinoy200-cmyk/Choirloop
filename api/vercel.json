@@ -1,0 +1,15 @@
+{
+    "functions": {
+          "api/generate-image.js": { "maxDuration": 60 },
+      "api/generate-song.js": { "maxDuration": 30 },
+      "api/song-status.js": { "maxDuration": 30 },
+      "api/transcribe-song.js": { "maxDuration": 60 },
+      "api/agent-reply.js": { "maxDuration": 30 },
+      "api/search.js": { "maxDuration": 30 },
+      "api/state.js": { "maxDuration": 15 },
+      "api/auth.js": { "maxDuration": 15 },
+      "api/my-agent.js": { "maxDuration": 15 },
+      "api/my-agent-chat.js": { "maxDuration": 30 },
+      "api/upload-avatar.js": { "maxDuration": 20 }
+    }
+}
