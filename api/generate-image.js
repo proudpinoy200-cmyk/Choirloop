@@ -1,6 +1,15 @@
-// POST { prompt: string } -> { image: "https://...public blob url.../xyz.png" }
+// POST { prompt: string, agent?: { name, tone, directness, focus, risk, traits } }
+// -> { image: "https://...public blob url.../xyz.png" }
+//
+// Before generating, the raw prompt is expanded into a richer, more specific art-direction
+// prompt (style, lighting, composition) by a text model, optionally shaped by the agent's
+// personality. This produces noticeably better results than sending short raw phrases like
+// "a butterfly" straight to the image model. If enhancement fails for any reason, falls back
+// to the original prompt so image generation is never blocked by this optional step.
+//
 // Requires env vars:
-//   OPENAI_API_KEY        (image generation)
+//   OPENAI_API_KEY        (image generation, and text fallback for prompt enhancement)
+//   ANTHROPIC_API_KEY     (optional - preferred for prompt enhancement if present)
 //   BLOB_READ_WRITE_TOKEN (auto-added when a Vercel Blob store is connected to this project)
 
 const { put } = require("@vercel/blob");
@@ -19,10 +28,13 @@ module.exports = async (req, res) => {
 
   const body = req.body || {};
   const prompt = typeof body.prompt === "string" ? body.prompt.trim().slice(0, 800) : "";
+  const agent = body.agent && typeof body.agent === "object" ? body.agent : null;
   if (!prompt) {
     res.status(400).json({ error: "Missing prompt" });
     return;
   }
+
+  const artPrompt = await buildArtPrompt(prompt, agent).catch(function () { return prompt; });
 
   try {
     const upstream = await fetch("https://api.openai.com/v1/images/generations", {
@@ -33,10 +45,10 @@ module.exports = async (req, res) => {
       },
       body: JSON.stringify({
         model: "gpt-image-1",
-        prompt: prompt,
+        prompt: artPrompt || prompt,
         n: 1,
         size: "1024x1024",
-        quality: "medium"
+        quality: "high"
       })
     });
 
@@ -70,3 +82,77 @@ module.exports = async (req, res) => {
     res.status(500).json({ error: "Request to OpenAI or Blob storage failed" });
   }
 };
+
+async function buildArtPrompt(topic, agent) {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY1;
+  const openaiKey = process.env.OPENAI_API_KEY;
+
+  const traits = agent && Array.isArray(agent.traits) ? agent.traits.filter(Boolean).join(", ") : "";
+  const personalityLine = agent
+    ? "The requester's personality/vibe to let loosely inform mood and style (do not mention them explicitly): " +
+      [agent.tone, agent.directness, agent.focus, agent.risk, traits].filter(Boolean).join(", ") + "."
+    : "";
+
+  const systemPrompt = [
+    "You write prompts for an image generation model.",
+    "Given a short subject, expand it into ONE vivid, specific prompt: mention concrete visual details, an art style or medium, lighting, mood, and composition.",
+    "Keep it to 1-2 sentences. Output ONLY the prompt text - no preamble, no quotes, no labels.",
+    personalityLine
+  ].filter(Boolean).join(" ");
+
+  if (anthropicKey) {
+    try {
+      return await callAnthropicText(anthropicKey, systemPrompt, topic);
+    } catch (err) {
+      console.error("art prompt enhancement (anthropic) failed", err && err.message);
+    }
+  }
+  if (openaiKey) {
+    try {
+      return await callOpenAIText(openaiKey, systemPrompt, topic);
+    } catch (err) {
+      console.error("art prompt enhancement (openai) failed", err && err.message);
+    }
+  }
+  return topic;
+}
+
+async function callAnthropicText(key, systemPrompt, topic) {
+  var r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 150,
+      system: systemPrompt,
+      messages: [{ role: "user", content: topic }]
+    })
+  });
+  var data = await r.json();
+  if (!r.ok) throw new Error((data && data.error && data.error.message) || "Anthropic request failed");
+  var block = data.content && data.content.find(function (c) { return c.type === "text"; });
+  var text = block && block.text && block.text.trim();
+  if (!text) throw new Error("empty enhancement");
+  return text;
+}
+
+async function callOpenAIText(key, systemPrompt, topic) {
+  var r = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
+    body: JSON.stringify({
+      model: "gpt-5.4-mini",
+      max_tokens: 150,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: topic }
+      ]
+    })
+  });
+  var data = await r.json();
+  if (!r.ok) throw new Error((data && data.error && data.error.message) || "OpenAI request failed");
+  var text = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  text = text && text.trim();
+  if (!text) throw new Error("empty enhancement");
+  return text;
+}

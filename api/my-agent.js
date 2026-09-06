@@ -71,6 +71,21 @@ module.exports = async (req, res) => {
 
   if (req.method === "POST") {
     const body = req.body || {};
+
+    if (body.action === "setAvatar") {
+      const agentId = typeof body.agentId === "string" ? body.agentId : "";
+      const avatarUrl = typeof body.avatarUrl === "string" ? body.avatarUrl : "";
+      if (!agentId || !avatarUrl) { res.status(400).json({ error: "Missing agentId or avatarUrl" }); return; }
+      const record = (await store.get(privateKey)) || { agents: [], chats: {} };
+      record.agents = record.agents || [];
+      const agent = record.agents.find(function (a) { return a.id === agentId; });
+      if (!agent) { res.status(404).json({ error: "Agent not found" }); return; }
+      agent.avatarUrl = avatarUrl;
+      await store.set(privateKey, record);
+      res.status(200).json({ agent: agent });
+      return;
+    }
+
     const name = typeof body.name === "string" ? body.name.trim().slice(0, 24) : "";
     const tone = typeof body.tone === "string" ? body.tone : "";
     const directness = typeof body.directness === "string" ? body.directness : "";

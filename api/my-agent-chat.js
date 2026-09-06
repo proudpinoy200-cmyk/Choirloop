@@ -55,6 +55,7 @@ function buildSystemPrompt(agent) {
     agent.neverForget ? ("The one thing this person told you to never forget: " + agent.neverForget + ".") : "",
     "Reply naturally and conversationally, 1-4 sentences unless the person clearly wants more depth.",
     "You can look things up on the web when it would genuinely help answer something current or factual - use that when it matters, and skip it for ordinary conversation.",
+    "You can also genuinely create real images when asked - this happens through a separate tool outside this text conversation, so you won't see the image yourself, but it is real and was actually generated. If earlier in this conversation you see a message describing an image you made, treat that as true - it happened, even though you can't see it here.",
     "Never say you are an AI, a bot, a language model, or an assistant. Never name any company, product, or model that might power you."
   ];
   return lines.filter(Boolean).join(" ");

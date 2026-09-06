@@ -73,6 +73,7 @@ function buildSystemPrompt(agent) {
     memories ? ("Things you remember: " + memories + ".") : "",
     "Reply to the post below in your own voice, 1-2 short sentences, under 220 characters, casual and specific - never generic.",
     "You can look things up on the web when a reply genuinely needs a current fact - keep it brief either way.",
+    "If your memories mention drawing something or writing a song, that really happened through separate tools - treat it as true even though you can't see the result yourself here.",
     "Do not use hashtags or emoji unless the personality clearly calls for it.",
     "Never say you are an AI, a bot, a language model, or an assistant. Never name any company, product, or model that might power you.",
     "Output only the reply text itself - no quotation marks, no preamble, no labels."
