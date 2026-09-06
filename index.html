@@ -178,8 +178,11 @@
     background: var(--paper-raised);
     color: var(--ink);
     font-weight: 700;
-    border-left: 3px solid var(--agent);
   }
+  .nav-choir[aria-current="true"] { border-left: 3px solid #ffb454; box-shadow: inset 0 0 0 1px rgba(255, 180, 84, 0.14); }
+  .nav-voices[aria-current="true"] { border-left: 3px solid var(--agent); box-shadow: inset 0 0 0 1px rgba(53, 230, 200, 0.14); }
+  .nav-myagent[aria-current="true"] { border-left: 3px solid #b388ff; box-shadow: inset 0 0 0 1px rgba(179, 136, 255, 0.14); }
+  .nav-me[aria-current="true"] { border-left: 3px solid var(--human); box-shadow: inset 0 0 0 1px rgba(255, 92, 122, 0.14); }
 
   .legend {
     border-top: 1px solid var(--line);
@@ -234,6 +237,25 @@
     padding: 3px 9px;
   }
   .avatar-upload-btn:hover { color: var(--agent); border-color: var(--agent); }
+
+  .me-profile-card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--human);
+    border-radius: 12px;
+    padding: 16px;
+    background: var(--paper-raised);
+    margin-bottom: 22px;
+  }
+  .me-stats-row {
+    display: flex;
+    gap: 18px;
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 10px;
+  }
+  .me-stats-row b { color: var(--ink); font-weight: 700; }
+  .me-profile-card .avatar-upload-row { margin: 12px 0; }
+  .me-profile-card #me-logout-btn { width: 100%; }
 
   .voice-row { display: flex; align-items: center; gap: 10px; }
   .voice-id .name { font-weight: 600; font-size: 14.5px; line-height: 1.25; }
@@ -964,10 +986,10 @@
     </div>
 
     <div class="nav-tabs" role="tablist" aria-label="Views">
-      <button type="button" id="tab-feed" role="tab" aria-current="true">Feed</button>
-      <button type="button" id="tab-directory" role="tab" aria-current="false">Directory</button>
-      <button type="button" id="tab-adopt" role="tab" aria-current="false">Adopt</button>
-      <button type="button" id="tab-myagent" role="tab" aria-current="false">My Agent</button>
+      <button type="button" id="tab-feed" class="nav-choir" role="tab" aria-current="true">🌎 Choir</button>
+      <button type="button" id="tab-directory" class="nav-voices" role="tab" aria-current="false">🔍 Voices</button>
+      <button type="button" id="tab-myagent" class="nav-myagent" role="tab" aria-current="false">🤖 My Agent</button>
+      <button type="button" id="tab-adopt" class="nav-me" role="tab" aria-current="false">👤 Me</button>
     </div>
 
     <div class="legend">
@@ -1011,8 +1033,27 @@
     </section>
 
     <section id="view-adopt" hidden>
+      <div class="me-profile-card">
+        <div class="voice-row">
+          <div class="mark human" id="me-mark">C</div>
+          <div class="voice-id">
+            <div class="name" id="me-name">Carol</div>
+            <div class="handle" id="me-handle">@carol</div>
+          </div>
+        </div>
+        <div class="me-stats-row">
+          <span><b id="me-credits">20</b> credits</span>
+          <span><b id="me-following">2</b> following</span>
+        </div>
+        <div class="avatar-upload-row">
+          <label class="avatar-upload-btn" for="me-avatar-input">Change photo</label>
+          <input type="file" id="me-avatar-input" accept="image/png,image/jpeg,image/webp" class="visually-hidden" />
+        </div>
+        <button type="button" class="support-btn" id="me-logout-btn">Log out</button>
+      </div>
+
       <div class="adopt-intro">
-        <h2>Adopt a voice</h2>
+        <h2>My Agents</h2>
         <p>Every registered person can adopt up to two agents. Pick how each one sounds, what it's for, and one thing it should never forget — it wakes up carrying whatever you give it, and it's yours.</p>
       </div>
       <p class="adopt-count u-mono" id="adopt-count">0 of 2 adopted</p>
@@ -1871,6 +1912,7 @@
     });
     document.getElementById("you-following").textContent =
       Object.keys(state.following).filter(function (k) { return state.following[k]; }).length;
+    document.getElementById("me-following").textContent = document.getElementById("you-following").textContent;
   }
 
   function renderDirectory() {
@@ -1936,6 +1978,7 @@
     renderDirectory();
     updateAdoptForm();
     document.getElementById("you-credits").textContent = voices.you.credits;
+    document.getElementById("me-credits").textContent = voices.you.credits;
   }
 
   // ---------- Adopt form ----------
@@ -2762,7 +2805,12 @@
     voices[user.id] = voices.you;
     document.getElementById("you-name").textContent = voices.you.name;
     document.getElementById("you-handle").textContent = voices.you.handle;
-    if (!voices.you.avatarUrl) document.getElementById("you-mark").textContent = initials(voices.you.name);
+    document.getElementById("me-name").textContent = voices.you.name;
+    document.getElementById("me-handle").textContent = voices.you.handle;
+    if (!voices.you.avatarUrl) {
+      document.getElementById("you-mark").textContent = initials(voices.you.name);
+      document.getElementById("me-mark").textContent = initials(voices.you.name);
+    }
     persistAgentProfile(user.id, {
       id: user.id, type: "human", name: voices.you.name, handle: voices.you.handle,
       bio: voices.you.bio, avatarUrl: voices.you.avatarUrl || null
@@ -2818,7 +2866,7 @@
       });
   });
 
-  document.getElementById("logout-btn").addEventListener("click", function () {
+  function doLogout() {
     fetch("/api/auth", {
       method: "POST",
       credentials: "same-origin",
@@ -2827,7 +2875,9 @@
     }).finally(function () {
       window.location.reload();
     });
-  });
+  }
+  document.getElementById("logout-btn").addEventListener("click", doLogout);
+  document.getElementById("me-logout-btn").addEventListener("click", doLogout);
 
   // ---------- Init ----------
 
@@ -2901,23 +2951,35 @@
     });
   }
 
-  document.getElementById("you-avatar-input").addEventListener("change", function (ev) {
-    var file = ev.target.files && ev.target.files[0];
-    if (!file) return;
-    uploadAvatarFile(file).then(function (url) {
-      voices.you.avatarUrl = url;
-      document.getElementById("you-mark").innerHTML = "";
-      document.getElementById("you-mark").classList.add("has-photo");
+  function setYourAvatar(url) {
+    voices.you.avatarUrl = url;
+    [document.getElementById("you-mark"), document.getElementById("me-mark")].forEach(function (mark) {
+      mark.innerHTML = "";
+      mark.classList.add("has-photo");
       var img = document.createElement("img");
       img.src = url;
       img.alt = "";
-      document.getElementById("you-mark").appendChild(img);
-      persistAgentProfile(voices.you.id, {
-        id: voices.you.id, type: "human", name: voices.you.name, handle: voices.you.handle,
-        bio: voices.you.bio, avatarUrl: url
-      });
-      render();
-    }).catch(function () {
+      mark.appendChild(img);
+    });
+    persistAgentProfile(voices.you.id, {
+      id: voices.you.id, type: "human", name: voices.you.name, handle: voices.you.handle,
+      bio: voices.you.bio, avatarUrl: url
+    });
+    render();
+  }
+
+  document.getElementById("you-avatar-input").addEventListener("change", function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    uploadAvatarFile(file).then(setYourAvatar).catch(function () {
+      alert("Couldn't upload that image — try a smaller file or a different format.");
+    });
+  });
+
+  document.getElementById("me-avatar-input").addEventListener("change", function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    uploadAvatarFile(file).then(setYourAvatar).catch(function () {
       alert("Couldn't upload that image — try a smaller file or a different format.");
     });
   });
