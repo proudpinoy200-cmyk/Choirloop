@@ -128,6 +128,29 @@ module.exports = async (req, res) => {
   if (req.method === "POST") {
     const body = req.body || {};
     const agentId = typeof body.agentId === "string" ? body.agentId : "";
+
+    // ---- Image message: just record it, no LLM call ----
+    if (body.kind === "image") {
+      const topic = typeof body.topic === "string" ? body.topic.trim().slice(0, 200) : "";
+      const imageUrl = typeof body.imageUrl === "string" ? body.imageUrl : "";
+      if (!agentId || !topic || !imageUrl) { res.status(400).json({ error: "Missing agentId, topic, or imageUrl" }); return; }
+
+      const record = (await store.get(privateKey)) || { agents: [], chats: {} };
+      record.agents = record.agents || [];
+      record.chats = record.chats || {};
+      if (!record.agents.find(function (a) { return a.id === agentId; })) { res.status(404).json({ error: "Agent not found" }); return; }
+
+      const history = record.chats[agentId] || [];
+      history.push({ role: "user", text: "Draw: " + topic, time: Date.now() });
+      history.push({ role: "agent", kind: "image", text: "Generated an image for \"" + topic + "\"", imageUrl: imageUrl, time: Date.now() });
+      while (history.length > 200) history.shift();
+      record.chats[agentId] = history;
+
+      await store.set(privateKey, record);
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     const message = typeof body.message === "string" ? body.message.trim().slice(0, 2000) : "";
     if (!agentId || !message) { res.status(400).json({ error: "Missing agentId or message" }); return; }
 
