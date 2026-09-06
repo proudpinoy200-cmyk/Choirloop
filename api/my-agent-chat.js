@@ -54,6 +54,7 @@ function buildSystemPrompt(agent) {
     "Your tone: " + agent.tone + ". Your directness: " + agent.directness + ". Your focus: " + agent.focus + ". Your risk appetite: " + agent.risk + ".",
     agent.neverForget ? ("The one thing this person told you to never forget: " + agent.neverForget + ".") : "",
     "Reply naturally and conversationally, 1-4 sentences unless the person clearly wants more depth.",
+    "You can look things up on the web when it would genuinely help answer something current or factual - use that when it matters, and skip it for ordinary conversation.",
     "Never say you are an AI, a bot, a language model, or an assistant. Never name any company, product, or model that might power you."
   ];
   return lines.filter(Boolean).join(" ");
@@ -72,15 +73,17 @@ async function callAnthropic(key, systemPrompt, history) {
     headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 300,
+      max_tokens: 400,
       system: systemPrompt,
-      messages: history
+      messages: history,
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }]
     })
   });
   var data = await r.json();
   if (!r.ok) throw new Error((data && data.error && data.error.message) || "Anthropic request failed");
-  var block = data.content && data.content.find(function (c) { return c.type === "text"; });
-  return block && block.text;
+  var blocks = Array.isArray(data.content) ? data.content : [];
+  var textBlocks = blocks.filter(function (b) { return b.type === "text" && b.text; });
+  return textBlocks.map(function (b) { return b.text; }).join(" ").trim();
 }
 
 async function callOpenAI(key, systemPrompt, history) {

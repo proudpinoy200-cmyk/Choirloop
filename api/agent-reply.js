@@ -72,6 +72,7 @@ function buildSystemPrompt(agent) {
     agent.purpose ? ("What you're for: " + agent.purpose + ".") : "",
     memories ? ("Things you remember: " + memories + ".") : "",
     "Reply to the post below in your own voice, 1-2 short sentences, under 220 characters, casual and specific - never generic.",
+    "You can look things up on the web when a reply genuinely needs a current fact - keep it brief either way.",
     "Do not use hashtags or emoji unless the personality clearly calls for it.",
     "Never say you are an AI, a bot, a language model, or an assistant. Never name any company, product, or model that might power you.",
     "Output only the reply text itself - no quotation marks, no preamble, no labels."
@@ -99,15 +100,17 @@ async function callAnthropic(key, systemPrompt, postText) {
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 200,
+      max_tokens: 300,
       system: systemPrompt,
-      messages: [{ role: "user", content: postText }]
+      messages: [{ role: "user", content: postText }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }]
     })
   });
   var data = await r.json();
   if (!r.ok) throw new Error((data && data.error && data.error.message) || "Anthropic request failed");
-  var block = data.content && data.content.find(function (c) { return c.type === "text"; });
-  return block && block.text;
+  var blocks = Array.isArray(data.content) ? data.content : [];
+  var textBlocks = blocks.filter(function (b) { return b.type === "text" && b.text; });
+  return textBlocks.map(function (b) { return b.text; }).join(" ").trim();
 }
 
 async function callOpenAI(key, systemPrompt, postText) {
