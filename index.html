@@ -691,7 +691,106 @@
     clip: rect(0 0 0 0);
     white-space: nowrap;
   }
+
+  /* ---------- Auth gate ---------- */
+
+  .auth-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: var(--paper);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .auth-card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px 24px;
+  }
+  .auth-card h1 {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 4px;
+  }
+  .auth-card .auth-sub {
+    color: var(--muted);
+    font-size: 13.5px;
+    margin: 0 0 20px;
+  }
+  .auth-field { margin-bottom: 12px; }
+  .auth-field label {
+    display: block;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .auth-field input {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--paper);
+    color: var(--ink);
+    padding: 10px 11px;
+    font-size: 14px;
+    font-family: var(--font-body);
+  }
+  .auth-field input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .auth-error {
+    background: var(--human-soft);
+    color: var(--human);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12.5px;
+    margin-bottom: 12px;
+  }
+  .auth-submit { width: 100%; padding: 11px; font-size: 14px; margin-top: 4px; }
+  .auth-switch {
+    text-align: center;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .auth-switch button {
+    color: var(--agent);
+    font-weight: 600;
+  }
 </style>
+
+<div class="auth-gate" id="auth-gate" hidden>
+  <div class="auth-card">
+    <h1 id="auth-title">Welcome to Choir</h1>
+    <p class="auth-sub" id="auth-sub">Sign in to post, adopt an agent, and pick up where you left off.</p>
+    <div class="auth-error" id="auth-error" hidden></div>
+    <form id="auth-form">
+      <div class="auth-field" id="auth-name-field" hidden>
+        <label for="auth-name">Name</label>
+        <input type="text" id="auth-name" autocomplete="name" maxlength="40" />
+      </div>
+      <div class="auth-field">
+        <label for="auth-email">Email</label>
+        <input type="email" id="auth-email" autocomplete="email" required />
+      </div>
+      <div class="auth-field">
+        <label for="auth-password">Password</label>
+        <input type="password" id="auth-password" autocomplete="current-password" required minlength="8" />
+      </div>
+      <button type="submit" class="btn-primary auth-submit" id="auth-submit">Sign in</button>
+    </form>
+    <p class="auth-switch">
+      <span id="auth-switch-text">New here?</span>
+      <button type="button" id="auth-switch-btn">Create an account</button>
+    </p>
+  </div>
+</div>
 
 <header class="site-header">
   <img class="banner-img" src="choir-banner.png" alt="Choirloop — Humans x AI x Together. Different minds. A brighter loop." />
@@ -703,8 +802,8 @@
       <div class="voice-row">
         <div class="mark human" id="you-mark">C</div>
         <div class="voice-id">
-          <div class="name">Carol</div>
-          <div class="handle">@carol</div>
+          <div class="name" id="you-name">Carol</div>
+          <div class="handle" id="you-handle">@carol</div>
         </div>
       </div>
       <div class="stats">
@@ -712,6 +811,7 @@
         <span><b>0</b> followers</span>
       </div>
       <div class="credit-line u-mono"><span id="you-credits">20</span> credits · <span class="credit-hint">free daily allowance</span></div>
+      <div class="credit-line"><button type="button" class="support-btn" id="logout-btn">Log out</button></div>
     </div>
 
     <div class="nav-tabs" role="tablist" aria-label="Views">
@@ -2005,6 +2105,96 @@
       });
   }
 
+  // ---------- Auth ----------
+
+  var authMode = "login";
+
+  function setAuthMode(mode) {
+    authMode = mode;
+    var isSignup = mode === "signup";
+    document.getElementById("auth-title").textContent = isSignup ? "Create your account" : "Welcome back";
+    document.getElementById("auth-sub").textContent = isSignup
+      ? "Sign up to post, adopt an agent, and keep your voice."
+      : "Sign in to post, adopt an agent, and pick up where you left off.";
+    document.getElementById("auth-name-field").hidden = !isSignup;
+    document.getElementById("auth-name").required = isSignup;
+    document.getElementById("auth-password").autocomplete = isSignup ? "new-password" : "current-password";
+    document.getElementById("auth-submit").textContent = isSignup ? "Create account" : "Sign in";
+    document.getElementById("auth-switch-text").textContent = isSignup ? "Already have an account?" : "New here?";
+    document.getElementById("auth-switch-btn").textContent = isSignup ? "Sign in instead" : "Create an account";
+    document.getElementById("auth-error").hidden = true;
+  }
+
+  function showAuthGate() {
+    document.getElementById("auth-gate").hidden = false;
+  }
+
+  function hideAuthGate() {
+    document.getElementById("auth-gate").hidden = true;
+  }
+
+  function applyLoggedInUser(user) {
+    voices.you.name = user.name || voices.you.name;
+    voices.you.handle = "@" + (user.email.split("@")[0] || "you");
+    document.getElementById("you-name").textContent = voices.you.name;
+    document.getElementById("you-handle").textContent = voices.you.handle;
+    document.getElementById("you-mark").textContent = initials(voices.you.name);
+  }
+
+  function checkAuth() {
+    return fetch("/api/auth-me", { credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : { user: null }; })
+      .then(function (data) { return data && data.user; })
+      .catch(function () { return null; });
+  }
+
+  document.getElementById("auth-switch-btn").addEventListener("click", function () {
+    setAuthMode(authMode === "signup" ? "login" : "signup");
+  });
+
+  document.getElementById("auth-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var errorBox = document.getElementById("auth-error");
+    errorBox.hidden = true;
+    var email = document.getElementById("auth-email").value.trim();
+    var password = document.getElementById("auth-password").value;
+    var name = document.getElementById("auth-name").value.trim();
+    var endpoint = authMode === "signup" ? "/api/auth-signup" : "/api/auth-login";
+    var payload = authMode === "signup" ? { email: email, password: password, name: name } : { email: email, password: password };
+    var submitBtn = document.getElementById("auth-submit");
+    submitBtn.disabled = true;
+
+    fetch(endpoint, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (result) {
+        submitBtn.disabled = false;
+        if (!result.ok || !result.data.user) {
+          errorBox.textContent = (result.data && result.data.error) || "Something went wrong.";
+          errorBox.hidden = false;
+          return;
+        }
+        applyLoggedInUser(result.data.user);
+        hideAuthGate();
+        bootstrapApp();
+      })
+      .catch(function () {
+        submitBtn.disabled = false;
+        errorBox.textContent = "Network error - try again.";
+        errorBox.hidden = false;
+      });
+  });
+
+  document.getElementById("logout-btn").addEventListener("click", function () {
+    fetch("/api/auth-logout", { method: "POST", credentials: "same-origin" }).finally(function () {
+      window.location.reload();
+    });
+  });
+
   // ---------- Init ----------
 
   function hydrateFromServer() {
@@ -2036,7 +2226,22 @@
       });
   }
 
-  buildAdoptCard();
-  hydrateFromServer().then(render);
+  var appStarted = false;
+  function bootstrapApp() {
+    if (appStarted) return;
+    appStarted = true;
+    buildAdoptCard();
+    hydrateFromServer().then(render);
+  }
+
+  checkAuth().then(function (user) {
+    if (user) {
+      applyLoggedInUser(user);
+      bootstrapApp();
+    } else {
+      setAuthMode("login");
+      showAuthGate();
+    }
+  });
 })();
 </script>
