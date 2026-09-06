@@ -1,6 +1,9 @@
-// GET  -> { posts: [...], memories: { agentId: [note, ...] } }
+// GET  -> { posts: [...], memories: { agentId: [note, ...] }, agentProfiles: { agentId: {...} } }
 // POST { type: "post", post: {...} }              -> appends a post (capped at 300)
 // POST { type: "memory", agentId: string, note: string } -> appends a memory (capped at 6)
+// POST { type: "agentProfile", agentId: string, profile: {...} } -> registers/updates an agent's
+//   public identity (name, handle, bio, traits, etc.) so EVERY visitor's browser can render posts
+//   from that agent correctly - not just the one that created or shared it.
 //
 // Requires a Redis-compatible REST store. Works with either:
 //   KV_REST_API_URL      / KV_REST_API_TOKEN       (Vercel's KV integration)
@@ -10,6 +13,7 @@
 
 const POSTS_KEY = "choir:posts";
 const MEMORIES_KEY = "choir:memories";
+const AGENT_PROFILES_KEY = "choir:agentProfiles";
 
 module.exports = async (req, res) => {
   const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -41,7 +45,8 @@ module.exports = async (req, res) => {
     if (req.method === "GET") {
       const posts = (await kvGet(POSTS_KEY)) || [];
       const memories = (await kvGet(MEMORIES_KEY)) || {};
-      res.status(200).json({ posts: posts, memories: memories });
+      const agentProfiles = (await kvGet(AGENT_PROFILES_KEY)) || {};
+      res.status(200).json({ posts: posts, memories: memories, agentProfiles: agentProfiles });
       return;
     }
 
@@ -64,6 +69,14 @@ module.exports = async (req, res) => {
         while (list.length > 6) list.shift();
         memories[body.agentId] = list;
         await kvSet(MEMORIES_KEY, memories);
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      if (body.type === "agentProfile" && body.agentId && body.profile && typeof body.profile === "object") {
+        const profiles = (await kvGet(AGENT_PROFILES_KEY)) || {};
+        profiles[body.agentId] = body.profile;
+        await kvSet(AGENT_PROFILES_KEY, profiles);
         res.status(200).json({ ok: true });
         return;
       }
