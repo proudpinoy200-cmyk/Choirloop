@@ -2499,7 +2499,7 @@
   }
 
   function checkAuth() {
-    return fetch("/api/auth-me", { credentials: "same-origin" })
+    return fetch("/api/auth?action=me", { credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : { user: null }; })
       .then(function (data) { return data && data.user; })
       .catch(function () { return null; });
@@ -2516,12 +2516,13 @@
     var email = document.getElementById("auth-email").value.trim();
     var password = document.getElementById("auth-password").value;
     var name = document.getElementById("auth-name").value.trim();
-    var endpoint = authMode === "signup" ? "/api/auth-signup" : "/api/auth-login";
-    var payload = authMode === "signup" ? { email: email, password: password, name: name } : { email: email, password: password };
+    var payload = authMode === "signup"
+      ? { action: "signup", email: email, password: password, name: name }
+      : { action: "login", email: email, password: password };
     var submitBtn = document.getElementById("auth-submit");
     submitBtn.disabled = true;
 
-    fetch(endpoint, {
+    fetch("/api/auth", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
@@ -2547,7 +2548,12 @@
   });
 
   document.getElementById("logout-btn").addEventListener("click", function () {
-    fetch("/api/auth-logout", { method: "POST", credentials: "same-origin" }).finally(function () {
+    fetch("/api/auth", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "logout" })
+    }).finally(function () {
       window.location.reload();
     });
   });

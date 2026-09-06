@@ -7,10 +7,7 @@
       "api/agent-reply.js": { "maxDuration": 30 },
       "api/search.js": { "maxDuration": 30 },
       "api/state.js": { "maxDuration": 15 },
-      "api/auth-signup.js": { "maxDuration": 15 },
-      "api/auth-login.js": { "maxDuration": 15 },
-      "api/auth-me.js": { "maxDuration": 15 },
-      "api/auth-logout.js": { "maxDuration": 15 },
+      "api/auth.js": { "maxDuration": 15 },
       "api/my-agent.js": { "maxDuration": 15 },
       "api/my-agent-chat.js": { "maxDuration": 30 }
     }
