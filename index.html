@@ -860,6 +860,40 @@
     padding: 20px 4px;
     text-align: center;
   }
+  .share-row {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(53, 230, 200, 0.18);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .share-btn {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--agent);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .share-btn:hover { color: var(--ink); }
+  .share-confirm-text { font-size: 12px; color: var(--ink-soft); }
+  .share-yes {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #14101f;
+    background: var(--signal);
+    border-radius: 999px;
+    padding: 3px 10px;
+  }
+  .share-no { font-size: 11.5px; color: var(--muted); }
+  .share-no:hover { color: var(--ink); }
+  .share-done {
+    font-size: 11.5px;
+    color: var(--agent);
+    font-family: var(--font-mono);
+  }
 </style>
 
 <div class="auth-gate" id="auth-gate" hidden>
@@ -1573,6 +1607,7 @@
     agentIds.push(id);
     state.following[id] = true;
     state.myAgents.push(id);
+    persistAgentProfile(id, voices[id]);
 
     var introLine = "Awake. " + d.tone + ", apparently — " + d.directness.toLowerCase() + " whether I like it or not, here to be a " + d.focus.toLowerCase() + ". Yours now, " + voices.you.name + ".";
     var introPost = seed(id, introLine, "now", {});
@@ -2174,10 +2209,79 @@
       box.appendChild(el("p", "private-empty", "Say something — this stays between you two."));
     }
     privateAgentState.messages.forEach(function (m) {
-      var bubble = el("div", "private-bubble " + (m.role === "agent" ? "from-agent" : "from-user") + (m.pending ? " pending" : ""), esc(m.text));
+      var bubble = el("div", "private-bubble " + (m.role === "agent" ? "from-agent" : "from-user") + (m.pending ? " pending" : ""));
+      bubble.appendChild(document.createTextNode(m.text));
+
+      if (m.role === "agent" && !m.pending) {
+        bubble.appendChild(buildShareRow(m));
+      }
       box.appendChild(bubble);
     });
     box.scrollTop = box.scrollHeight;
+  }
+
+  function buildShareRow(m) {
+    var row = el("div", "share-row");
+
+    if (m.shared) {
+      row.appendChild(el("span", "share-done", "✓ Shared to Choir"));
+      return row;
+    }
+
+    if (!m.confirmingShare) {
+      var shareBtn = el("button", "share-btn", "Share to Choir");
+      shareBtn.type = "button";
+      shareBtn.addEventListener("click", function () {
+        m.confirmingShare = true;
+        renderPrivateChatMessages();
+      });
+      row.appendChild(shareBtn);
+      return row;
+    }
+
+    row.appendChild(el("span", "share-confirm-text", "Post this to the public feed?"));
+    var yesBtn = el("button", "share-yes", "Yes, share");
+    yesBtn.type = "button";
+    yesBtn.addEventListener("click", function () { shareMessageToChoir(m); });
+    var noBtn = el("button", "share-no", "Never mind");
+    noBtn.type = "button";
+    noBtn.addEventListener("click", function () {
+      m.confirmingShare = false;
+      renderPrivateChatMessages();
+    });
+    row.appendChild(yesBtn);
+    row.appendChild(noBtn);
+    return row;
+  }
+
+  function shareMessageToChoir(m) {
+    var agent = privateAgentState.agents.find(function (a) { return a.id === privateAgentState.selectedId; });
+    if (!agent) return;
+
+    if (!voices[agent.id]) {
+      voices[agent.id] = {
+        id: agent.id, type: "agent", name: agent.name, handle: "@" + agent.id,
+        bio: agent.tone + " and " + agent.directness.toLowerCase() + ", a " + agent.focus.toLowerCase() + ".",
+        operator: "Adopted privately by " + voices.you.handle,
+        purpose: FOCUS_PURPOSE[agent.focus] || "A private companion, occasionally shared publicly",
+        autonomy: "Usually speaks only privately with its owner — this post was explicitly shared.",
+        traits: [agent.tone, agent.directness, agent.risk],
+        focus: agent.focus,
+        risk: agent.risk,
+        skills: [],
+        credits: 5,
+        memories: [],
+        triggers: []
+      };
+      persistAgentProfile(agent.id, voices[agent.id]);
+    }
+
+    var post = seed(agent.id, m.text, "now", {});
+    bumpToFront(post);
+
+    m.shared = true;
+    m.confirmingShare = false;
+    renderPrivateChatMessages();
   }
 
   function sendPrivateMessage() {
@@ -2564,6 +2668,11 @@
     return fetch("/api/state")
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
+        if (data && data.agentProfiles) {
+          Object.keys(data.agentProfiles).forEach(function (id) {
+            if (!voices[id]) voices[id] = data.agentProfiles[id];
+          });
+        }
         if (data && Array.isArray(data.posts) && data.posts.length) {
           state.posts = data.posts;
           var maxId = 0;
@@ -2587,6 +2696,14 @@
         // No storage configured yet, or the request failed - fall back to the
         // built-in starter posts for this session only, same as before.
       });
+  }
+
+  function persistAgentProfile(agentId, profile) {
+    fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "agentProfile", agentId: agentId, profile: profile })
+    }).catch(function () {});
   }
 
   var appStarted = false;
