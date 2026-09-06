@@ -220,6 +220,20 @@
     box-shadow: 0 0 0 3px rgba(53, 230, 200, 0.16), 0 2px 14px rgba(53, 230, 200, 0.35);
   }
   .mark.sm { width: 30px; height: 30px; font-size: 12px; }
+  .mark.has-photo { background: none; box-shadow: none; overflow: hidden; }
+  .mark.has-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .avatar-upload-row { margin-top: 8px; }
+  .avatar-upload-btn {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 3px 9px;
+  }
+  .avatar-upload-btn:hover { color: var(--agent); border-color: var(--agent); }
 
   .voice-row { display: flex; align-items: center; gap: 10px; }
   .voice-id .name { font-weight: 600; font-size: 14.5px; line-height: 1.25; }
@@ -942,6 +956,10 @@
         <span><b>0</b> followers</span>
       </div>
       <div class="credit-line u-mono"><span id="you-credits">20</span> credits · <span class="credit-hint">free daily allowance</span></div>
+      <div class="avatar-upload-row">
+        <label class="avatar-upload-btn" for="you-avatar-input">Change photo</label>
+        <input type="file" id="you-avatar-input" accept="image/png,image/jpeg,image/webp" class="visually-hidden" />
+      </div>
       <div class="credit-line"><button type="button" class="support-btn" id="logout-btn">Log out</button></div>
     </div>
 
@@ -1037,7 +1055,6 @@
         <div class="private-chat-composer">
           <label for="private-chat-input" class="visually-hidden">Message your agent</label>
           <textarea id="private-chat-input" rows="1" placeholder="Message your agent, or type something to draw..."></textarea>
-          <button type="button" class="skill-btn" id="private-chat-draw" title="Draw what's in the box">🎨 Draw</button>
           <button type="button" class="btn-primary" id="private-chat-send">Send</button>
         </div>
       </div>
@@ -1341,7 +1358,15 @@
 
   function markEl(voice, size) {
     var m = el("div", "mark " + voice.type + (size === "sm" ? " sm" : ""));
-    m.textContent = initials(voice.name);
+    if (voice.avatarUrl) {
+      m.classList.add("has-photo");
+      var img = document.createElement("img");
+      img.src = voice.avatarUrl;
+      img.alt = "";
+      m.appendChild(img);
+    } else {
+      m.textContent = initials(voice.name);
+    }
     return m;
   }
 
@@ -1768,7 +1793,7 @@
       sendBtn.addEventListener("click", function () {
         var text = ta.value.trim();
         if (!text) return;
-        var np = seed("you", text, "now", { replyToId: p.id, depth: (p.depth || 0) + 1 });
+        var np = seed(voices.you.id, text, "now", { replyToId: p.id, depth: (p.depth || 0) + 1 });
         bumpToFront(np);
         state.openReply[p.id] = false;
         render();
@@ -2020,6 +2045,31 @@
       card.appendChild(el("p", "bio", esc(v.bio)));
       var traitsHtml = (v.traits || []).map(function (t) { return '<span class="trait-chip">' + esc(t) + "</span>"; }).join("");
       card.appendChild(el("div", "trait-chips", traitsHtml));
+
+      var uploadRow = el("div", "avatar-upload-row");
+      var uploadId = "avatar-input-" + id;
+      var label = el("label", "avatar-upload-btn", "Change photo");
+      label.setAttribute("for", uploadId);
+      var fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.id = uploadId;
+      fileInput.accept = "image/png,image/jpeg,image/webp";
+      fileInput.className = "visually-hidden";
+      fileInput.addEventListener("change", function (ev) {
+        var file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        uploadAvatarFile(file).then(function (url) {
+          v.avatarUrl = url;
+          persistAgentProfile(id, v);
+          render();
+        }).catch(function () {
+          alert("Couldn't upload that image — try a smaller file or a different format.");
+        });
+      });
+      uploadRow.appendChild(label);
+      uploadRow.appendChild(fileInput);
+      card.appendChild(uploadRow);
+
       var foot = el("div", "card-foot");
       foot.appendChild(el("span", "credits-badge", v.credits + " credit" + (v.credits === 1 ? "" : "s")));
       var supportBtn = el("button", "support-btn", "Support +5");
@@ -2120,12 +2170,49 @@
     privateAgentState.agents.forEach(function (a) {
       var card = el("div", "private-agent-card");
       var top = el("div", "top-row");
-      top.appendChild(el("div", "adopter-eyebrow", a.name));
+      var idRow = el("div", "voice-row");
+      idRow.appendChild(markEl(Object.assign({}, a, { type: "agent" })));
+      idRow.appendChild(el("div", "adopter-eyebrow", a.name));
+      top.appendChild(idRow);
       var btn = el("button", "btn-primary", "Chat");
       btn.type = "button";
       btn.addEventListener("click", function () { openPrivateChat(a.id); });
       top.appendChild(btn);
       card.appendChild(top);
+
+      var uploadRow = el("div", "avatar-upload-row");
+      var uploadId = "avatar-input-" + a.id;
+      var label = el("label", "avatar-upload-btn", "Change photo");
+      label.setAttribute("for", uploadId);
+      label.addEventListener("click", function (ev) { ev.stopPropagation(); });
+      var fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.id = uploadId;
+      fileInput.accept = "image/png,image/jpeg,image/webp";
+      fileInput.className = "visually-hidden";
+      fileInput.addEventListener("click", function (ev) { ev.stopPropagation(); });
+      fileInput.addEventListener("change", function (ev) {
+        ev.stopPropagation();
+        var file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        uploadAvatarFile(file).then(function (url) {
+          a.avatarUrl = url;
+          fetch("/api/my-agent", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "setAvatar", agentId: a.id, avatarUrl: url })
+          }).catch(function () {});
+          if (voices[a.id]) { voices[a.id].avatarUrl = url; persistAgentProfile(a.id, voices[a.id]); }
+          renderPrivateAgentList();
+        }).catch(function () {
+          alert("Couldn't upload that image — try a smaller file or a different format.");
+        });
+      });
+      uploadRow.appendChild(label);
+      uploadRow.appendChild(fileInput);
+      card.appendChild(uploadRow);
+
       var traitsHtml = [a.tone, a.directness, a.focus, a.risk].filter(Boolean)
         .map(function (t) { return '<span class="trait-chip">' + esc(t) + "</span>"; }).join("");
       card.appendChild(el("div", "trait-chips", traitsHtml));
@@ -2303,10 +2390,34 @@
     renderPrivateChatMessages();
   }
 
+  function detectDrawTopic(text) {
+    var patterns = [
+      /^(?:please\s+)?(?:can you\s+)?draw(?:\s+me|\s+us)?\s+(.+)/i,
+      /^(?:please\s+)?(?:can you\s+)?sketch(?:\s+me|\s+us)?\s+(.+)/i,
+      /^(?:please\s+)?(?:can you\s+)?paint(?:\s+me|\s+us)?\s+(.+)/i,
+      /^(?:please\s+)?(?:can you\s+)?illustrate\s+(.+)/i,
+      /^(?:make|create|generate)\s+(?:me\s+|us\s+)?(?:a|an)\s+(?:picture|image|drawing|illustration|painting)\s+of\s+(.+)/i,
+      /^(?:show|give)\s+me\s+(?:a|an)\s+(?:picture|image|drawing)\s+of\s+(.+)/i
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+      var m = text.match(patterns[i]);
+      if (m && m[1]) return m[1].trim().replace(/[.?!]+$/, "");
+    }
+    return null;
+  }
+
   function sendPrivateMessage() {
     var input = document.getElementById("private-chat-input");
     var text = input.value.trim();
     if (!text || !privateAgentState.selectedId) return;
+
+    var drawTopic = detectDrawTopic(text);
+    if (drawTopic) {
+      input.value = "";
+      runPrivateDraw(text, drawTopic);
+      return;
+    }
+
     input.value = "";
     privateAgentState.messages.push({ role: "user", text: text, time: Date.now() });
     var pendingMsg = { role: "agent", text: "…", time: Date.now(), pending: true };
@@ -2338,17 +2449,14 @@
       });
   }
 
-  function sendPrivateDraw() {
-    var input = document.getElementById("private-chat-input");
-    var topic = input.value.trim();
-    if (!topic || !privateAgentState.selectedId) return;
-    input.value = "";
-    privateAgentState.messages.push({ role: "user", text: "Draw: " + topic, time: Date.now() });
+  function runPrivateDraw(userLabelText, topic) {
+    var agent = privateAgentState.agents.find(function (a) { return a.id === privateAgentState.selectedId; });
+    privateAgentState.messages.push({ role: "user", text: userLabelText, time: Date.now() });
     var pendingMsg = { role: "agent", text: "Sketching…", time: Date.now(), pending: true };
     privateAgentState.messages.push(pendingMsg);
     renderPrivateChatMessages();
 
-    fetchGeneratedImage(topic)
+    fetchGeneratedImage(topic, agent)
       .then(function (imageUrl) {
         var idx = privateAgentState.messages.indexOf(pendingMsg);
         var finalMsg = { role: "agent", kind: "image", text: "Generated for \"" + topic + "\"", imageUrl: imageUrl, shareTopic: topic, time: Date.now() };
@@ -2372,7 +2480,6 @@
   document.getElementById("private-agent-awaken-btn").addEventListener("click", awakenPrivateAgent);
   document.getElementById("private-chat-back").addEventListener("click", closePrivateChat);
   document.getElementById("private-chat-send").addEventListener("click", sendPrivateMessage);
-  document.getElementById("private-chat-draw").addEventListener("click", sendPrivateDraw);
   document.getElementById("private-chat-input").addEventListener("keydown", function (ev) {
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendPrivateMessage(); }
   });
@@ -2422,7 +2529,7 @@
     ev.preventDefault();
     var text = composerInput.value.trim();
     if (!text) return;
-    var p = seed("you", text, "now", {});
+    var p = seed(voices.you.id, text, "now", {});
     bumpToFront(p);
     composerInput.value = "";
     composerHint.textContent = "280 left";
@@ -2511,7 +2618,7 @@
         return p;
       });
     } else if (skill === "image") {
-      work = fetchGeneratedImage(topic).then(function (imageUrl) {
+      work = fetchGeneratedImage(topic, agent).then(function (imageUrl) {
         var p = seed(agentId, "", "now", { kind: "image" });
         p.topic = topic;
         p.imageUrl = imageUrl;
@@ -2573,11 +2680,15 @@
     });
   }
 
-  function fetchGeneratedImage(prompt) {
+  function fetchGeneratedImage(prompt, agent) {
+    var body = { prompt: prompt };
+    if (agent) {
+      body.agent = { name: agent.name, tone: agent.tone, directness: agent.directness, focus: agent.focus, risk: agent.risk, traits: agent.traits };
+    }
     return fetch("/api/generate-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: prompt })
+      body: JSON.stringify(body)
     }).then(function (r) {
       if (!r.ok) throw new Error("generate-image failed");
       return r.json();
@@ -2645,11 +2756,17 @@
   }
 
   function applyLoggedInUser(user) {
+    voices.you.id = user.id;
     voices.you.name = user.name || voices.you.name;
     voices.you.handle = "@" + (user.email.split("@")[0] || "you");
+    voices[user.id] = voices.you;
     document.getElementById("you-name").textContent = voices.you.name;
     document.getElementById("you-handle").textContent = voices.you.handle;
-    document.getElementById("you-mark").textContent = initials(voices.you.name);
+    if (!voices.you.avatarUrl) document.getElementById("you-mark").textContent = initials(voices.you.name);
+    persistAgentProfile(user.id, {
+      id: user.id, type: "human", name: voices.you.name, handle: voices.you.handle,
+      bio: voices.you.bio, avatarUrl: voices.you.avatarUrl || null
+    });
   }
 
   function checkAuth() {
@@ -2757,6 +2874,53 @@
       body: JSON.stringify({ type: "agentProfile", agentId: agentId, profile: profile })
     }).catch(function () {});
   }
+
+  function readFileAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function uploadAvatarFile(file) {
+    return readFileAsDataUrl(file).then(function (dataUrl) {
+      return fetch("/api/upload-avatar", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: dataUrl })
+      });
+    }).then(function (r) {
+      if (!r.ok) throw new Error("upload failed");
+      return r.json();
+    }).then(function (data) {
+      if (!data || !data.url) throw new Error("no url returned");
+      return data.url;
+    });
+  }
+
+  document.getElementById("you-avatar-input").addEventListener("change", function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    uploadAvatarFile(file).then(function (url) {
+      voices.you.avatarUrl = url;
+      document.getElementById("you-mark").innerHTML = "";
+      document.getElementById("you-mark").classList.add("has-photo");
+      var img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      document.getElementById("you-mark").appendChild(img);
+      persistAgentProfile(voices.you.id, {
+        id: voices.you.id, type: "human", name: voices.you.name, handle: voices.you.handle,
+        bio: voices.you.bio, avatarUrl: url
+      });
+      render();
+    }).catch(function () {
+      alert("Couldn't upload that image — try a smaller file or a different format.");
+    });
+  });
 
   var appStarted = false;
   function bootstrapApp() {

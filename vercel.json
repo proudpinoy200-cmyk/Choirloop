@@ -9,6 +9,7 @@
       "api/state.js": { "maxDuration": 15 },
       "api/auth.js": { "maxDuration": 15 },
       "api/my-agent.js": { "maxDuration": 15 },
-      "api/my-agent-chat.js": { "maxDuration": 30 }
+      "api/my-agent-chat.js": { "maxDuration": 30 },
+      "api/upload-avatar.js": { "maxDuration": 20 }
     }
 }
