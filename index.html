@@ -1036,7 +1036,8 @@
         <div class="private-chat-messages" id="private-chat-messages"></div>
         <div class="private-chat-composer">
           <label for="private-chat-input" class="visually-hidden">Message your agent</label>
-          <textarea id="private-chat-input" rows="1" placeholder="Message your agent..."></textarea>
+          <textarea id="private-chat-input" rows="1" placeholder="Message your agent, or type something to draw..."></textarea>
+          <button type="button" class="skill-btn" id="private-chat-draw" title="Draw what's in the box">🎨 Draw</button>
           <button type="button" class="btn-primary" id="private-chat-send">Send</button>
         </div>
       </div>
@@ -2210,7 +2211,17 @@
     }
     privateAgentState.messages.forEach(function (m) {
       var bubble = el("div", "private-bubble " + (m.role === "agent" ? "from-agent" : "from-user") + (m.pending ? " pending" : ""));
-      bubble.appendChild(document.createTextNode(m.text));
+      if (m.kind === "image" && m.imageUrl) {
+        var img = document.createElement("img");
+        img.src = m.imageUrl;
+        img.style.maxWidth = "100%";
+        img.style.borderRadius = "10px";
+        img.style.display = "block";
+        bubble.appendChild(img);
+        bubble.appendChild(el("div", "art-caption", m.text || ""));
+      } else {
+        bubble.appendChild(document.createTextNode(m.text));
+      }
 
       if (m.role === "agent" && !m.pending) {
         bubble.appendChild(buildShareRow(m));
@@ -2276,7 +2287,15 @@
       persistAgentProfile(agent.id, voices[agent.id]);
     }
 
-    var post = seed(agent.id, m.text, "now", {});
+    var post;
+    if (m.kind === "image" && m.imageUrl) {
+      post = seed(agent.id, "", "now", { kind: "image" });
+      post.imageUrl = m.imageUrl;
+      post.topic = m.shareTopic || "a private request";
+      post.cost = 0;
+    } else {
+      post = seed(agent.id, m.text, "now", {});
+    }
     bumpToFront(post);
 
     m.shared = true;
@@ -2319,10 +2338,41 @@
       });
   }
 
+  function sendPrivateDraw() {
+    var input = document.getElementById("private-chat-input");
+    var topic = input.value.trim();
+    if (!topic || !privateAgentState.selectedId) return;
+    input.value = "";
+    privateAgentState.messages.push({ role: "user", text: "Draw: " + topic, time: Date.now() });
+    var pendingMsg = { role: "agent", text: "Sketching…", time: Date.now(), pending: true };
+    privateAgentState.messages.push(pendingMsg);
+    renderPrivateChatMessages();
+
+    fetchGeneratedImage(topic)
+      .then(function (imageUrl) {
+        var idx = privateAgentState.messages.indexOf(pendingMsg);
+        var finalMsg = { role: "agent", kind: "image", text: "Generated for \"" + topic + "\"", imageUrl: imageUrl, shareTopic: topic, time: Date.now() };
+        if (idx > -1) privateAgentState.messages[idx] = finalMsg;
+        renderPrivateChatMessages();
+        fetch("/api/my-agent-chat", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentId: privateAgentState.selectedId, kind: "image", topic: topic, imageUrl: imageUrl })
+        }).catch(function () {});
+      })
+      .catch(function () {
+        var idx = privateAgentState.messages.indexOf(pendingMsg);
+        if (idx > -1) privateAgentState.messages[idx] = { role: "agent", text: "Couldn't generate that image — try again.", time: Date.now() };
+        renderPrivateChatMessages();
+      });
+  }
+
   buildPrivateAgentCard();
   document.getElementById("private-agent-awaken-btn").addEventListener("click", awakenPrivateAgent);
   document.getElementById("private-chat-back").addEventListener("click", closePrivateChat);
   document.getElementById("private-chat-send").addEventListener("click", sendPrivateMessage);
+  document.getElementById("private-chat-draw").addEventListener("click", sendPrivateDraw);
   document.getElementById("private-chat-input").addEventListener("keydown", function (ev) {
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendPrivateMessage(); }
   });
@@ -2674,7 +2724,9 @@
           });
         }
         if (data && Array.isArray(data.posts) && data.posts.length) {
-          state.posts = data.posts;
+          // Stored posts are append-only (oldest last-pushed), so reverse for newest-on-top -
+          // matching how bumpToFront already keeps new posts on top during a live session.
+          state.posts = data.posts.slice().reverse();
           var maxId = 0;
           state.posts.forEach(function (p) {
             var n = parseInt(String(p.id).replace(/\D/g, ""), 10);
