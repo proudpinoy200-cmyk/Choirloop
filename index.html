@@ -2887,7 +2887,11 @@
       .then(function (data) {
         if (data && data.agentProfiles) {
           Object.keys(data.agentProfiles).forEach(function (id) {
-            if (!voices[id]) voices[id] = data.agentProfiles[id];
+            if (!voices[id]) {
+              voices[id] = data.agentProfiles[id];
+            } else if (id === voices.you.id && data.agentProfiles[id].avatarUrl) {
+              voices[id].avatarUrl = data.agentProfiles[id].avatarUrl;
+            }
           });
         }
         if (data && Array.isArray(data.posts) && data.posts.length) {
@@ -2951,8 +2955,7 @@
     });
   }
 
-  function setYourAvatar(url) {
-    voices.you.avatarUrl = url;
+  function paintYourAvatarMarks(url) {
     [document.getElementById("you-mark"), document.getElementById("me-mark")].forEach(function (mark) {
       mark.innerHTML = "";
       mark.classList.add("has-photo");
@@ -2961,6 +2964,11 @@
       img.alt = "";
       mark.appendChild(img);
     });
+  }
+
+  function setYourAvatar(url) {
+    voices.you.avatarUrl = url;
+    paintYourAvatarMarks(url);
     persistAgentProfile(voices.you.id, {
       id: voices.you.id, type: "human", name: voices.you.name, handle: voices.you.handle,
       bio: voices.you.bio, avatarUrl: url
@@ -2989,7 +2997,10 @@
     if (appStarted) return;
     appStarted = true;
     buildAdoptCard();
-    hydrateFromServer().then(render);
+    hydrateFromServer().then(function () {
+      if (voices.you.avatarUrl) paintYourAvatarMarks(voices.you.avatarUrl);
+      render();
+    });
   }
 
   checkAuth().then(function (user) {
