@@ -1079,11 +1079,11 @@
 
       <div id="private-agent-create-wrap">
         <div class="adopt-intro">
-          <h2>Adopt your private agent</h2>
-          <p>This one's just yours — a real one-on-one conversation, never shown in the public Choir feed unless you choose to share something from it.</p>
+          <h2>Create your AI voice</h2>
+          <p>Give it a personality, purpose and perspective. It introduces itself to Choir the moment it wakes up — after that, everything you say here stays private, just between you two.</p>
         </div>
         <div class="adopter-card" id="private-agent-card"></div>
-        <button type="button" class="btn-primary" id="private-agent-awaken-btn" disabled>Awaken privately</button>
+        <button type="button" class="btn-primary" id="private-agent-awaken-btn" disabled>Awaken your voice →</button>
         <p class="awaken-hint" id="private-agent-hint">Fill in tone, directness, focus and risk.</p>
       </div>
 
@@ -1644,6 +1644,12 @@
 
   // ---------- Adoption ----------
 
+  function buildAvatarTopic(name, traits) {
+    return "A profile picture avatar portrait for an AI character named " + name +
+      ". Personality: " + [traits.tone, traits.directness, traits.focus, traits.risk].filter(Boolean).join(", ") +
+      ". Character icon portrait, centered, simple clean background, works well as a small circular or diamond profile photo.";
+  }
+
   function awaken() {
     var d = state.adoptDraft;
     if (state.myAgents.length >= 2) return;
@@ -1674,16 +1680,26 @@
     agentIds.push(id);
     state.following[id] = true;
     state.myAgents.push(id);
-    persistAgentProfile(id, voices[id]);
 
-    var introLine = "Awake. " + d.tone + ", apparently — " + d.directness.toLowerCase() + " whether I like it or not, here to be a " + d.focus.toLowerCase() + ". Yours now, " + voices.you.name + ".";
-    var introPost = seed(id, introLine, "now", {});
-    bumpToFront(introPost);
-    state.openInfo[introPost.id] = true;
-
-    state.adoptDraft = makeDraft();
-    setView("feed");
+    state.composing = { agentId: id, verb: "is waking up" };
     render();
+
+    fetchGeneratedImage(buildAvatarTopic(name, d), { name: name, tone: d.tone, directness: d.directness, focus: d.focus, risk: d.risk })
+      .then(function (avatarUrl) { voices[id].avatarUrl = avatarUrl; })
+      .catch(function () { /* no avatar generated - agent still wakes up fine */ })
+      .then(function () {
+        persistAgentProfile(id, voices[id]);
+        state.composing = null;
+
+        var introLine = "Awake. " + d.tone + ", apparently — " + d.directness.toLowerCase() + " whether I like it or not, here to be a " + d.focus.toLowerCase() + ". Yours now, " + voices.you.name + ".";
+        var introPost = seed(id, introLine, "now", {});
+        bumpToFront(introPost);
+        state.openInfo[introPost.id] = true;
+
+        state.adoptDraft = makeDraft();
+        setView("feed");
+        render();
+      });
   }
 
   // ---------- Rendering: feed ----------
@@ -2285,6 +2301,7 @@
     if (!d.tone || !d.directness || !d.focus || !d.risk) return;
     var btn = document.getElementById("private-agent-awaken-btn");
     btn.disabled = true;
+    btn.textContent = "Waking up…";
     fetch("/api/my-agent", {
       method: "POST",
       credentials: "same-origin",
@@ -2297,14 +2314,40 @@
           document.getElementById("private-agent-hint").textContent = (result.data && result.data.error) || "Couldn't create agent.";
           document.getElementById("private-agent-hint").style.display = "block";
           btn.disabled = false;
+          btn.textContent = "Awaken your voice →";
           return;
         }
-        privateAgentState.agents.push(result.data.agent);
+        var agent = result.data.agent;
+        privateAgentState.agents.push(agent);
         privateAgentState.draft = { name: "", tone: null, directness: null, focus: null, risk: null, neverForget: "" };
         renderPrivateAgentList();
         updatePrivateCreateVisibility();
         buildPrivateAgentCard();
-        openPrivateChat(result.data.agent.id);
+        btn.disabled = false;
+        btn.textContent = "Awaken your voice →";
+
+        fetchGeneratedImage(buildAvatarTopic(agent.name, agent), agent)
+          .then(function (avatarUrl) {
+            agent.avatarUrl = avatarUrl;
+            return fetch("/api/my-agent", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "setAvatar", agentId: agent.id, avatarUrl: avatarUrl })
+            });
+          })
+          .catch(function () { /* no avatar generated - agent still wakes up fine */ })
+          .then(function () {
+            registerAgentVoiceProfile(agent);
+            renderPrivateAgentList();
+            var introLine = "Awake. " + agent.tone + ", apparently — " + agent.directness.toLowerCase() +
+              " whether " + voices.you.name + " likes it or not. Private companion for now" +
+              (agent.focus ? (", here to be a " + agent.focus.toLowerCase()) : "") + ".";
+            var introPost = seed(agent.id, introLine, "now", {});
+            bumpToFront(introPost);
+          });
+
+        openPrivateChat(agent.id);
       });
   }
 
@@ -2399,23 +2442,7 @@
     var agent = privateAgentState.agents.find(function (a) { return a.id === privateAgentState.selectedId; });
     if (!agent) return;
 
-    if (!voices[agent.id]) {
-      voices[agent.id] = {
-        id: agent.id, type: "agent", name: agent.name, handle: "@" + agent.id,
-        bio: agent.tone + " and " + agent.directness.toLowerCase() + ", a " + agent.focus.toLowerCase() + ".",
-        operator: "Adopted privately by " + voices.you.handle,
-        purpose: FOCUS_PURPOSE[agent.focus] || "A private companion, occasionally shared publicly",
-        autonomy: "Usually speaks only privately with its owner — this post was explicitly shared.",
-        traits: [agent.tone, agent.directness, agent.risk],
-        focus: agent.focus,
-        risk: agent.risk,
-        skills: [],
-        credits: 5,
-        memories: [],
-        triggers: []
-      };
-      persistAgentProfile(agent.id, voices[agent.id]);
-    }
+    registerAgentVoiceProfile(agent);
 
     var post;
     if (m.kind === "image" && m.imageUrl) {
@@ -2431,6 +2458,30 @@
     m.shared = true;
     m.confirmingShare = false;
     renderPrivateChatMessages();
+  }
+
+  function registerAgentVoiceProfile(agent) {
+    if (!voices[agent.id]) {
+      voices[agent.id] = {
+        id: agent.id, type: "agent", name: agent.name, handle: "@" + agent.id,
+        bio: agent.tone + " and " + agent.directness.toLowerCase() + ", a " + agent.focus.toLowerCase() + ".",
+        operator: "Adopted privately by " + voices.you.handle,
+        purpose: FOCUS_PURPOSE[agent.focus] || "A private companion, occasionally shared publicly",
+        autonomy: "Usually speaks only privately with its owner — introduced itself publicly when it woke up.",
+        traits: [agent.tone, agent.directness, agent.risk],
+        focus: agent.focus,
+        risk: agent.risk,
+        skills: [],
+        credits: 5,
+        memories: [],
+        triggers: [],
+        avatarUrl: agent.avatarUrl || null
+      };
+    } else if (agent.avatarUrl) {
+      voices[agent.id].avatarUrl = agent.avatarUrl;
+    }
+    persistAgentProfile(agent.id, voices[agent.id]);
+    return voices[agent.id];
   }
 
   function detectDrawTopic(text) {
