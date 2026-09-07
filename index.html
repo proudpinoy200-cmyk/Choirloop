@@ -1259,6 +1259,14 @@
   var DIRECT_OPTS = ["Blunt", "Diplomatic"];
   var FOCUS_OPTS = ["Companion", "Researcher", "Creative partner", "Critic"];
   var RISK_OPTS = ["Cautious", "Bold"];
+  var LOOK_OPTS = ["🧑 Human-like", "🐾 Animal", "🤖 Robot", "✨ Mythical", "🌀 Abstract"];
+  var LOOK_PROMPT_HINTS = {
+    "🧑 Human-like": "a human-like character",
+    "🐾 Animal": "an animal or creature character",
+    "🤖 Robot": "a robot or synthetic mechanical being",
+    "✨ Mythical": "a mythical being - a fairy, spirit, or angelic figure",
+    "🌀 Abstract": "an abstract form of light, pattern, or energy rather than a literal body"
+  };
 
   var FOCUS_PURPOSE = {
     "Companion": "Keeps company and remembers what you tell it",
@@ -1339,7 +1347,7 @@
   };
 
   function makeDraft() {
-    return { name: "", tone: null, directness: null, focus: null, risk: null, memory: "" };
+    return { name: "", tone: null, directness: null, focus: null, risk: null, look: null, memory: "" };
   }
 
   function seed(authorId, text, time, opts) {
@@ -1645,7 +1653,9 @@
   // ---------- Adoption ----------
 
   function buildAvatarTopic(name, traits) {
+    var lookHint = LOOK_PROMPT_HINTS[traits.look] || "";
     return "A profile picture avatar portrait for an AI character named " + name +
+      (lookHint ? (", depicted as " + lookHint) : "") +
       ". Personality: " + [traits.tone, traits.directness, traits.focus, traits.risk].filter(Boolean).join(", ") +
       ". Character icon portrait, centered, simple clean background, works well as a small circular or diamond profile photo.";
   }
@@ -1672,6 +1682,7 @@
       traits: [d.tone, d.directness, d.risk],
       focus: d.focus,
       risk: d.risk,
+      look: d.look || null,
       skills: FOCUS_SKILLS[d.focus] || ["search"],
       credits: 5,
       memories: memories,
@@ -2048,6 +2059,11 @@
     riskGroup.appendChild(optionRow("risk", RISK_OPTS));
     card.appendChild(riskGroup);
 
+    var lookGroup = el("div", "option-group");
+    lookGroup.appendChild(el("span", "field-label", "How does it look? (optional)"));
+    lookGroup.appendChild(optionRow("look", LOOK_OPTS));
+    card.appendChild(lookGroup);
+
     var memGroup = el("div", "option-group");
     memGroup.appendChild(el("span", "field-label", "One thing it should never forget"));
     var memInput = document.createElement("input");
@@ -2076,7 +2092,7 @@
     var card = document.getElementById("adopt-card");
     if (!card || !card.children.length) return;
     var d = state.adoptDraft;
-    ["tone", "directness", "focus", "risk"].forEach(function (axis) {
+    ["tone", "directness", "focus", "risk", "look"].forEach(function (axis) {
       var btns = card.querySelectorAll('.option-btn[data-axis="' + axis + '"]');
       btns.forEach(function (b) { b.classList.toggle("on", b.dataset.value === d[axis]); });
     });
@@ -2153,7 +2169,7 @@
     selectedId: null,
     messages: [],
     loaded: false,
-    draft: { name: "", tone: null, directness: null, focus: null, risk: null, neverForget: "" }
+    draft: { name: "", tone: null, directness: null, focus: null, risk: null, look: null, neverForget: "" }
   };
 
   function privateOptionRow(axis, options, draft, onChange) {
@@ -2185,7 +2201,7 @@
     nameInput.addEventListener("input", function () { d.name = nameInput.value; });
     card.appendChild(nameInput);
 
-    [["tone", "Tone", TONE_OPTS], ["directness", "Directness", DIRECT_OPTS], ["focus", "Focus", FOCUS_OPTS], ["risk", "Risk appetite", RISK_OPTS]].forEach(function (spec) {
+    [["tone", "Tone", TONE_OPTS], ["directness", "Directness", DIRECT_OPTS], ["focus", "Focus", FOCUS_OPTS], ["risk", "Risk appetite", RISK_OPTS], ["look", "How does it look? (optional)", LOOK_OPTS]].forEach(function (spec) {
       var group = el("div", "option-group");
       group.appendChild(el("span", "field-label", spec[1]));
       group.appendChild(privateOptionRow(spec[0], spec[2], d, updatePrivateAgentForm));
@@ -2209,7 +2225,7 @@
   function updatePrivateAgentForm() {
     var card = document.getElementById("private-agent-card");
     var d = privateAgentState.draft;
-    ["tone", "directness", "focus", "risk"].forEach(function (axis) {
+    ["tone", "directness", "focus", "risk", "look"].forEach(function (axis) {
       card.querySelectorAll('.option-btn[data-axis="' + axis + '"]').forEach(function (b) {
         b.classList.toggle("on", b.dataset.value === d[axis]);
       });
@@ -2319,7 +2335,7 @@
         }
         var agent = result.data.agent;
         privateAgentState.agents.push(agent);
-        privateAgentState.draft = { name: "", tone: null, directness: null, focus: null, risk: null, neverForget: "" };
+        privateAgentState.draft = { name: "", tone: null, directness: null, focus: null, risk: null, look: null, neverForget: "" };
         renderPrivateAgentList();
         updatePrivateCreateVisibility();
         buildPrivateAgentCard();
@@ -2471,6 +2487,7 @@
         traits: [agent.tone, agent.directness, agent.risk],
         focus: agent.focus,
         risk: agent.risk,
+        look: agent.look || null,
         skills: [],
         credits: 5,
         memories: [],
