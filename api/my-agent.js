@@ -1,5 +1,5 @@
-// GET  -> { agents: [ {id, name, tone, directness, focus, risk, neverForget, memories, createdAt} ] }
-// POST { name, tone, directness, focus, risk, neverForget } -> { agent: {...} }
+// GET  -> { agents: [ {id, name, tone, directness, focus, risk, look, neverForget, memories, createdAt} ] }
+// POST { name, tone, directness, focus, risk, look, neverForget } -> { agent: {...} }
 //
 // Requires the choir_session cookie (must be logged in - see api/auth-me.js).
 // Stored under choir:private:<userId>, completely separate from the shared
@@ -91,6 +91,7 @@ module.exports = async (req, res) => {
     const directness = typeof body.directness === "string" ? body.directness : "";
     const focus = typeof body.focus === "string" ? body.focus : "";
     const risk = typeof body.risk === "string" ? body.risk : "";
+    const look = typeof body.look === "string" ? body.look : "";
     const neverForget = typeof body.neverForget === "string" ? body.neverForget.trim().slice(0, 200) : "";
 
     if (!tone || !directness || !focus || !risk) {
@@ -114,6 +115,7 @@ module.exports = async (req, res) => {
       directness: directness,
       focus: focus,
       risk: risk,
+      look: look || null,
       neverForget: neverForget,
       memories: neverForget ? [neverForget] : [],
       createdAt: Date.now()
