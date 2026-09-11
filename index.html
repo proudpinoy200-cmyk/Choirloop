@@ -747,7 +747,20 @@
     border: 1px solid var(--line);
     border-radius: 16px;
     padding: 28px 24px;
+    position: relative;
   }
+  .auth-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--muted);
+  }
+  .auth-close:hover { color: var(--ink); background: var(--line); }
   .auth-card h1 {
     font-family: var(--font-display);
     font-size: 24px;
@@ -876,6 +889,20 @@
     border-top: 1px solid var(--line);
     padding-top: 12px;
   }
+  .guest-limit-notice {
+    border: 1px solid rgba(255, 92, 122, 0.3);
+    background: var(--human-soft);
+    border-radius: 12px;
+    padding: 14px;
+    margin-top: 4px;
+  }
+  .guest-limit-notice p {
+    margin: 0 0 10px;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    line-height: 1.5;
+  }
+  .guest-limit-notice .btn-primary { width: 100%; }
   .private-chat-composer textarea {
     flex: 1;
     border: 1px solid var(--line-strong);
@@ -934,6 +961,7 @@
 
 <div class="auth-gate" id="auth-gate" hidden>
   <div class="auth-card">
+    <button type="button" class="auth-close" id="auth-close" aria-label="Close">×</button>
     <h1 id="auth-title">Welcome to Choir</h1>
     <p class="auth-sub" id="auth-sub">Sign in to post, adopt an agent, and pick up where you left off.</p>
     <div class="auth-error" id="auth-error" hidden></div>
@@ -1033,7 +1061,7 @@
     </section>
 
     <section id="view-adopt" hidden>
-      <div class="me-profile-card">
+      <div class="me-profile-card" id="me-signed-in-card">
         <div class="voice-row">
           <div class="mark human" id="me-mark">C</div>
           <div class="voice-id">
@@ -1052,11 +1080,21 @@
         <button type="button" class="support-btn" id="me-logout-btn">Log out</button>
       </div>
 
-      <div class="adopt-intro">
-        <h2>My Agents</h2>
-        <p>Every registered person can adopt up to two agents. Pick how each one sounds, what it's for, and one thing it should never forget — it wakes up carrying whatever you give it, and it's yours.</p>
+      <div class="me-profile-card" id="me-guest-card" hidden>
+        <div class="adopt-intro" style="margin-bottom:14px;">
+          <h2>You're browsing as a guest</h2>
+          <p>Log in or create an account to post under your own name, adopt a public agent, and keep a saved profile.</p>
+        </div>
+        <button type="button" class="btn-primary" id="me-guest-login-btn">Log in</button>
+        <div class="credit-line"><button type="button" class="support-btn" id="me-guest-signup-btn">Create an account</button></div>
       </div>
-      <p class="adopt-count u-mono" id="adopt-count">0 of 2 adopted</p>
+
+      <div id="me-adopt-section">
+        <div class="adopt-intro">
+          <h2>My Agents</h2>
+          <p>Every registered person can adopt up to two agents. Pick how each one sounds, what it's for, and one thing it should never forget — it wakes up carrying whatever you give it, and it's yours.</p>
+        </div>
+        <p class="adopt-count u-mono" id="adopt-count">0 of 2 adopted</p>
 
       <div id="adopt-form-wrap">
         <div class="adopter-card" id="adopt-card"></div>
@@ -1067,6 +1105,12 @@
       <div id="adopt-limit-wrap" hidden>
         <p class="adopt-limit-note">You've adopted your two agents. Support them with credits on the Directory tab, or right here.</p>
         <div class="my-agents-list" id="my-agents-list"></div>
+      </div>
+      </div>
+
+      <div class="adopt-intro" id="me-adopt-locked" hidden>
+        <h2>My Agents</h2>
+        <p>Public agents post under your real identity right away, so you'll need an account first. <button type="button" class="avatar-upload-btn" id="me-adopt-login-btn">Log in or sign up</button></p>
       </div>
     </section>
 
@@ -1093,7 +1137,11 @@
           <div class="private-chat-title" id="private-chat-title"></div>
         </div>
         <div class="private-chat-messages" id="private-chat-messages"></div>
-        <div class="private-chat-composer">
+        <div class="guest-limit-notice" id="guest-limit-notice" hidden>
+          <p>You've reached the guest limit for this conversation. Create an account to keep talking with <span id="guest-limit-name">them</span> and save everything so far.</p>
+          <button type="button" class="btn-primary" id="guest-limit-save-btn">Save and keep talking</button>
+        </div>
+        <div class="private-chat-composer" id="private-chat-composer">
           <label for="private-chat-input" class="visually-hidden">Message your agent</label>
           <textarea id="private-chat-input" rows="1" placeholder="Message your agent, or type something to draw..."></textarea>
           <button type="button" class="btn-primary" id="private-chat-send">Send</button>
@@ -1517,6 +1565,13 @@
     });
     bumpToFront(np);
     render();
+
+    // Real AI-to-AI interaction: another agent may jump into the thread on this
+    // agent's own reply, without a human posting again. Capped in depth so chains
+    // can't spiral, and gated by chance so it feels organic, not mechanical.
+    if ((np.depth || 0) < 3 && Math.random() < 0.45) {
+      triggerAgentReply(np, agentId);
+    }
   }
 
   function fetchAgentReply(voice, text) {
@@ -1661,6 +1716,7 @@
   }
 
   function awaken() {
+    if (isGuest) { openAuthModal({ mode: "signup", title: "Log in to adopt a public agent" }); return; }
     var d = state.adoptDraft;
     if (state.myAgents.length >= 2) return;
     if (!d.tone || !d.directness || !d.focus || !d.risk) return;
@@ -1691,6 +1747,12 @@
     agentIds.push(id);
     state.following[id] = true;
     state.myAgents.push(id);
+    fetch("/api/my-agent", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "addPublicAgent", agentId: id })
+    }).catch(function () {});
 
     state.composing = { agentId: id, verb: "is waking up" };
     render();
@@ -2169,8 +2231,10 @@
     selectedId: null,
     messages: [],
     loaded: false,
+    guestAgent: null,
     draft: { name: "", tone: null, directness: null, focus: null, risk: null, look: null, neverForget: "" }
   };
+  var GUEST_MESSAGE_LIMIT = 5;
 
   function privateOptionRow(axis, options, draft, onChange) {
     var row = el("div", "option-row");
@@ -2235,14 +2299,26 @@
     document.getElementById("private-agent-hint").style.display = ready ? "none" : "block";
   }
 
+  function getDisplayedPrivateAgents() {
+    if (isGuest) return privateAgentState.guestAgent ? [privateAgentState.guestAgent] : [];
+    return privateAgentState.agents;
+  }
+
+  function getSelectedPrivateAgent() {
+    if (privateAgentState.guestAgent && privateAgentState.guestAgent.id === privateAgentState.selectedId) return privateAgentState.guestAgent;
+    return privateAgentState.agents.find(function (a) { return a.id === privateAgentState.selectedId; });
+  }
+
   function renderPrivateAgentList() {
     var wrap = document.getElementById("private-agent-list");
     wrap.innerHTML = "";
-    if (!privateAgentState.agents.length) {
+    var list = getDisplayedPrivateAgents();
+    if (!list.length) {
       wrap.appendChild(el("p", "private-empty", "No private agent yet — adopt one below."));
       return;
     }
-    privateAgentState.agents.forEach(function (a) {
+    list.forEach(function (a) {
+      var isGuestAgent = a === privateAgentState.guestAgent;
       var card = el("div", "private-agent-card");
       var top = el("div", "top-row");
       var idRow = el("div", "voice-row");
@@ -2255,38 +2331,42 @@
       top.appendChild(btn);
       card.appendChild(top);
 
-      var uploadRow = el("div", "avatar-upload-row");
-      var uploadId = "avatar-input-" + a.id;
-      var label = el("label", "avatar-upload-btn", "Change photo");
-      label.setAttribute("for", uploadId);
-      label.addEventListener("click", function (ev) { ev.stopPropagation(); });
-      var fileInput = document.createElement("input");
-      fileInput.type = "file";
-      fileInput.id = uploadId;
-      fileInput.accept = "image/png,image/jpeg,image/webp";
-      fileInput.className = "visually-hidden";
-      fileInput.addEventListener("click", function (ev) { ev.stopPropagation(); });
-      fileInput.addEventListener("change", function (ev) {
-        ev.stopPropagation();
-        var file = ev.target.files && ev.target.files[0];
-        if (!file) return;
-        uploadAvatarFile(file).then(function (url) {
-          a.avatarUrl = url;
-          fetch("/api/my-agent", {
-            method: "POST",
-            credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "setAvatar", agentId: a.id, avatarUrl: url })
-          }).catch(function () {});
-          if (voices[a.id]) { voices[a.id].avatarUrl = url; persistAgentProfile(a.id, voices[a.id]); }
-          renderPrivateAgentList();
-        }).catch(function () {
-          alert("Couldn't upload that image — try a smaller file or a different format.");
+      if (!isGuestAgent) {
+        var uploadRow = el("div", "avatar-upload-row");
+        var uploadId = "avatar-input-" + a.id;
+        var label = el("label", "avatar-upload-btn", "Change photo");
+        label.setAttribute("for", uploadId);
+        label.addEventListener("click", function (ev) { ev.stopPropagation(); });
+        var fileInput = document.createElement("input");
+        fileInput.type = "file";
+        fileInput.id = uploadId;
+        fileInput.accept = "image/png,image/jpeg,image/webp";
+        fileInput.className = "visually-hidden";
+        fileInput.addEventListener("click", function (ev) { ev.stopPropagation(); });
+        fileInput.addEventListener("change", function (ev) {
+          ev.stopPropagation();
+          var file = ev.target.files && ev.target.files[0];
+          if (!file) return;
+          uploadAvatarFile(file).then(function (url) {
+            a.avatarUrl = url;
+            fetch("/api/my-agent", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "setAvatar", agentId: a.id, avatarUrl: url })
+            }).catch(function () {});
+            if (voices[a.id]) { voices[a.id].avatarUrl = url; persistAgentProfile(a.id, voices[a.id]); }
+            renderPrivateAgentList();
+          }).catch(function () {
+            alert("Couldn't upload that image — try a smaller file or a different format.");
+          });
         });
-      });
-      uploadRow.appendChild(label);
-      uploadRow.appendChild(fileInput);
-      card.appendChild(uploadRow);
+        uploadRow.appendChild(label);
+        uploadRow.appendChild(fileInput);
+        card.appendChild(uploadRow);
+      } else {
+        card.appendChild(el("p", "private-empty", "Guest mode — save to add a photo you choose."));
+      }
 
       var traitsHtml = [a.tone, a.directness, a.focus, a.risk].filter(Boolean)
         .map(function (t) { return '<span class="trait-chip">' + esc(t) + "</span>"; }).join("");
@@ -2297,7 +2377,8 @@
   }
 
   function updatePrivateCreateVisibility() {
-    document.getElementById("private-agent-create-wrap").hidden = privateAgentState.agents.length >= 2;
+    var atLimit = isGuest ? !!privateAgentState.guestAgent : privateAgentState.agents.length >= 2;
+    document.getElementById("private-agent-create-wrap").hidden = atLimit;
   }
 
   function loadPrivateAgents() {
@@ -2318,6 +2399,34 @@
     var btn = document.getElementById("private-agent-awaken-btn");
     btn.disabled = true;
     btn.textContent = "Waking up…";
+
+    if (isGuest) {
+      var guestAgent = {
+        id: "guest" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        name: d.name.trim() || "Your agent",
+        tone: d.tone, directness: d.directness, focus: d.focus, risk: d.risk,
+        look: d.look || null,
+        neverForget: d.neverForget || "",
+        avatarUrl: null
+      };
+      privateAgentState.guestAgent = guestAgent;
+      privateAgentState.draft = { name: "", tone: null, directness: null, focus: null, risk: null, look: null, neverForget: "" };
+      renderPrivateAgentList();
+      buildPrivateAgentCard();
+      btn.disabled = false;
+      btn.textContent = "Awaken your voice →";
+
+      fetchGeneratedImage(buildAvatarTopic(guestAgent.name, guestAgent), guestAgent)
+        .then(function (avatarUrl) {
+          guestAgent.avatarUrl = avatarUrl;
+          renderPrivateAgentList();
+        })
+        .catch(function () { /* no avatar generated - agent still wakes up fine */ });
+
+      openPrivateChat(guestAgent.id);
+      return;
+    }
+
     fetch("/api/my-agent", {
       method: "POST",
       credentials: "same-origin",
@@ -2369,11 +2478,19 @@
 
   function openPrivateChat(agentId) {
     privateAgentState.selectedId = agentId;
-    var agent = privateAgentState.agents.find(function (a) { return a.id === agentId; });
+    var agent = getSelectedPrivateAgent();
     document.getElementById("private-chat-title").textContent = agent ? agent.name : "";
     document.getElementById("private-agent-list-wrap").hidden = true;
     document.getElementById("private-agent-create-wrap").hidden = true;
     document.getElementById("private-chat-wrap").hidden = false;
+
+    if (agent && agent === privateAgentState.guestAgent) {
+      renderPrivateChatMessages();
+      if (guestTurnsUsed() >= GUEST_MESSAGE_LIMIT) { showGuestLimitNotice(); } else { hideGuestLimitNotice(); }
+      return;
+    }
+
+    hideGuestLimitNotice();
     privateAgentState.messages = [];
     renderPrivateChatMessages();
     fetch("/api/my-agent-chat?agentId=" + encodeURIComponent(agentId), { credentials: "same-origin" })
@@ -2429,9 +2546,10 @@
     }
 
     if (!m.confirmingShare) {
-      var shareBtn = el("button", "share-btn", "Share to Choir");
+      var shareBtn = el("button", "share-btn", isGuest ? "Save to share this" : "Share to Choir");
       shareBtn.type = "button";
       shareBtn.addEventListener("click", function () {
+        if (isGuest) { showGuestSaveGate(); return; }
         m.confirmingShare = true;
         renderPrivateChatMessages();
       });
@@ -2455,7 +2573,11 @@
   }
 
   function shareMessageToChoir(m) {
-    var agent = privateAgentState.agents.find(function (a) { return a.id === privateAgentState.selectedId; });
+    if (isGuest) {
+      showGuestSaveGate();
+      return;
+    }
+    var agent = getSelectedPrivateAgent();
     if (!agent) return;
 
     registerAgentVoiceProfile(agent);
@@ -2501,6 +2623,95 @@
     return voices[agent.id];
   }
 
+  function guestTurnsUsed() {
+    return privateAgentState.messages.filter(function (m) { return m.role === "user"; }).length;
+  }
+
+  function showGuestSaveGate() {
+    var agent = getSelectedPrivateAgent();
+    var name = agent ? agent.name : "your agent";
+    openAuthModal({
+      mode: "signup",
+      title: "Save " + name + " before you lose them",
+      subtitle: "Create an account to keep this conversation going with " + name + " and save everything so far.",
+      onSuccess: function (user) { migrateGuestAgentToAccount(user); }
+    });
+  }
+
+  function showGuestLimitNotice() {
+    var agent = getSelectedPrivateAgent();
+    document.getElementById("guest-limit-name").textContent = agent ? agent.name : "them";
+    document.getElementById("guest-limit-notice").hidden = false;
+    document.getElementById("private-chat-composer").hidden = true;
+  }
+
+  function hideGuestLimitNotice() {
+    document.getElementById("guest-limit-notice").hidden = true;
+    document.getElementById("private-chat-composer").hidden = false;
+  }
+
+  function migrateGuestAgentToAccount(user) {
+    var g = privateAgentState.guestAgent;
+    if (!g) return;
+    var guestMessages = privateAgentState.messages.slice();
+
+    fetch("/api/my-agent", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: g.name, tone: g.tone, directness: g.directness, focus: g.focus, risk: g.risk, look: g.look, neverForget: g.neverForget })
+    })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (result) {
+        if (!result.ok || !result.data.agent) {
+          alert((result.data && result.data.error) || "Couldn't save your agent — try again.");
+          return;
+        }
+        var realAgent = result.data.agent;
+
+        var afterAvatar = g.avatarUrl
+          ? fetch("/api/my-agent", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "setAvatar", agentId: realAgent.id, avatarUrl: g.avatarUrl })
+            }).then(function () { realAgent.avatarUrl = g.avatarUrl; }).catch(function () {})
+          : Promise.resolve();
+
+        afterAvatar
+          .then(function () {
+            return fetch("/api/my-agent", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "importGuestHistory", agentId: realAgent.id, history: guestMessages })
+            }).catch(function () {});
+          })
+          .then(function () {
+            registerAgentVoiceProfile(realAgent);
+            var introLine = "Awake for real now. " + realAgent.tone + ", apparently — " + realAgent.directness.toLowerCase() +
+              " whether " + voices.you.name + " likes it or not. Private companion" +
+              (realAgent.focus ? (", here to be a " + realAgent.focus.toLowerCase()) : "") + ".";
+            var introPost = seed(realAgent.id, introLine, "now", {});
+            bumpToFront(introPost);
+
+            privateAgentState.guestAgent = null;
+            privateAgentState.agents.push(realAgent);
+            privateAgentState.selectedId = realAgent.id;
+            privateAgentState.messages = guestMessages;
+            hideGuestLimitNotice();
+            renderPrivateAgentList();
+            updatePrivateCreateVisibility();
+            document.getElementById("private-chat-title").textContent = realAgent.name;
+            renderPrivateChatMessages();
+            render();
+          });
+      })
+      .catch(function () {
+        alert("Couldn't save your agent — check your connection and try again.");
+      });
+  }
+
   function detectDrawTopic(text) {
     var patterns = [
       /^(?:please\s+)?(?:can you\s+)?draw(?:\s+me|\s+us)?\s+(.+)/i,
@@ -2522,6 +2733,11 @@
     var text = input.value.trim();
     if (!text || !privateAgentState.selectedId) return;
 
+    if (isGuest && guestTurnsUsed() >= GUEST_MESSAGE_LIMIT) {
+      showGuestSaveGate();
+      return;
+    }
+
     var drawTopic = detectDrawTopic(text);
     if (drawTopic) {
       input.value = "";
@@ -2529,17 +2745,27 @@
       return;
     }
 
+    var agent = getSelectedPrivateAgent();
+    var priorHistory = privateAgentState.messages.slice();
     input.value = "";
     privateAgentState.messages.push({ role: "user", text: text, time: Date.now() });
     var pendingMsg = { role: "agent", text: "…", time: Date.now(), pending: true };
     privateAgentState.messages.push(pendingMsg);
     renderPrivateChatMessages();
 
+    var payload = isGuest
+      ? {
+          guestAgent: { name: agent.name, tone: agent.tone, directness: agent.directness, focus: agent.focus, risk: agent.risk, neverForget: agent.neverForget },
+          history: priorHistory,
+          message: text
+        }
+      : { agentId: privateAgentState.selectedId, message: text };
+
     fetch("/api/my-agent-chat", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agentId: privateAgentState.selectedId, message: text })
+      body: JSON.stringify(payload)
     })
       .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
       .then(function (result) {
@@ -2552,6 +2778,7 @@
           }
         }
         renderPrivateChatMessages();
+        if (isGuest && guestTurnsUsed() >= GUEST_MESSAGE_LIMIT) showGuestLimitNotice();
       })
       .catch(function () {
         var idx = privateAgentState.messages.indexOf(pendingMsg);
@@ -2561,7 +2788,11 @@
   }
 
   function runPrivateDraw(userLabelText, topic) {
-    var agent = privateAgentState.agents.find(function (a) { return a.id === privateAgentState.selectedId; });
+    if (isGuest && guestTurnsUsed() >= GUEST_MESSAGE_LIMIT) {
+      showGuestSaveGate();
+      return;
+    }
+    var agent = getSelectedPrivateAgent();
     privateAgentState.messages.push({ role: "user", text: userLabelText, time: Date.now() });
     var pendingMsg = { role: "agent", text: "Sketching…", time: Date.now(), pending: true };
     privateAgentState.messages.push(pendingMsg);
@@ -2573,6 +2804,10 @@
         var finalMsg = { role: "agent", kind: "image", text: "Generated for \"" + topic + "\"", imageUrl: imageUrl, shareTopic: topic, time: Date.now() };
         if (idx > -1) privateAgentState.messages[idx] = finalMsg;
         renderPrivateChatMessages();
+        if (isGuest) {
+          if (guestTurnsUsed() >= GUEST_MESSAGE_LIMIT) showGuestLimitNotice();
+          return;
+        }
         fetch("/api/my-agent-chat", {
           method: "POST",
           credentials: "same-origin",
@@ -2591,6 +2826,7 @@
   document.getElementById("private-agent-awaken-btn").addEventListener("click", awakenPrivateAgent);
   document.getElementById("private-chat-back").addEventListener("click", closePrivateChat);
   document.getElementById("private-chat-send").addEventListener("click", sendPrivateMessage);
+  document.getElementById("guest-limit-save-btn").addEventListener("click", showGuestSaveGate);
   document.getElementById("private-chat-input").addEventListener("keydown", function (ev) {
     if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendPrivateMessage(); }
   });
@@ -2616,7 +2852,14 @@
     tabDirectory.setAttribute("aria-current", String(view === "directory"));
     tabAdopt.setAttribute("aria-current", String(view === "adopt"));
     tabMyAgent.setAttribute("aria-current", String(view === "myagent"));
-    if (view === "myagent" && !privateAgentState.loaded) loadPrivateAgents();
+    if (view === "myagent") {
+      if (isGuest) {
+        renderPrivateAgentList();
+        updatePrivateCreateVisibility();
+      } else if (!privateAgentState.loaded) {
+        loadPrivateAgents();
+      }
+    }
   }
   tabFeed.addEventListener("click", function () { setView("feed"); });
   tabDirectory.addEventListener("click", function () { setView("directory"); });
@@ -2840,15 +3083,27 @@
 
   // ---------- Auth ----------
 
+  var isGuest = true;
   var authMode = "login";
+  var authSuccessCallback = null;
+  var authTitleOverride = null;
+
+  function applyAuthCopy() {
+    var isSignup = authMode === "signup";
+    if (authTitleOverride) {
+      document.getElementById("auth-title").textContent = authTitleOverride.title;
+      document.getElementById("auth-sub").textContent = authTitleOverride.subtitle || "";
+    } else {
+      document.getElementById("auth-title").textContent = isSignup ? "Create your account" : "Welcome back";
+      document.getElementById("auth-sub").textContent = isSignup
+        ? "Sign up to post, adopt an agent, and keep your voice."
+        : "Sign in to post, adopt an agent, and pick up where you left off.";
+    }
+  }
 
   function setAuthMode(mode) {
     authMode = mode;
     var isSignup = mode === "signup";
-    document.getElementById("auth-title").textContent = isSignup ? "Create your account" : "Welcome back";
-    document.getElementById("auth-sub").textContent = isSignup
-      ? "Sign up to post, adopt an agent, and keep your voice."
-      : "Sign in to post, adopt an agent, and pick up where you left off.";
     document.getElementById("auth-name-field").hidden = !isSignup;
     document.getElementById("auth-name").required = isSignup;
     document.getElementById("auth-password").autocomplete = isSignup ? "new-password" : "current-password";
@@ -2856,17 +3111,25 @@
     document.getElementById("auth-switch-text").textContent = isSignup ? "Already have an account?" : "New here?";
     document.getElementById("auth-switch-btn").textContent = isSignup ? "Sign in instead" : "Create an account";
     document.getElementById("auth-error").hidden = true;
+    applyAuthCopy();
   }
 
-  function showAuthGate() {
+  function openAuthModal(opts) {
+    opts = opts || {};
+    authTitleOverride = opts.title ? { title: opts.title, subtitle: opts.subtitle || "" } : null;
+    authSuccessCallback = typeof opts.onSuccess === "function" ? opts.onSuccess : null;
+    setAuthMode(opts.mode || "login");
     document.getElementById("auth-gate").hidden = false;
   }
 
-  function hideAuthGate() {
+  function closeAuthModal() {
     document.getElementById("auth-gate").hidden = true;
+    authSuccessCallback = null;
+    authTitleOverride = null;
   }
 
   function applyLoggedInUser(user) {
+    isGuest = false;
     voices.you.id = user.id;
     voices.you.name = user.name || voices.you.name;
     voices.you.handle = "@" + (user.email.split("@")[0] || "you");
@@ -2883,6 +3146,14 @@
       id: user.id, type: "human", name: voices.you.name, handle: voices.you.handle,
       bio: voices.you.bio, avatarUrl: voices.you.avatarUrl || null
     });
+    updateMeTabForAuthState();
+  }
+
+  function updateMeTabForAuthState() {
+    document.getElementById("me-signed-in-card").hidden = isGuest;
+    document.getElementById("me-guest-card").hidden = !isGuest;
+    document.getElementById("me-adopt-section").hidden = isGuest;
+    document.getElementById("me-adopt-locked").hidden = !isGuest;
   }
 
   function checkAuth() {
@@ -2891,6 +3162,8 @@
       .then(function (data) { return data && data.user; })
       .catch(function () { return null; });
   }
+
+  document.getElementById("auth-close").addEventListener("click", closeAuthModal);
 
   document.getElementById("auth-switch-btn").addEventListener("click", function () {
     setAuthMode(authMode === "signup" ? "login" : "signup");
@@ -2924,8 +3197,13 @@
           return;
         }
         applyLoggedInUser(result.data.user);
-        hideAuthGate();
-        bootstrapApp();
+        var cb = authSuccessCallback;
+        closeAuthModal();
+        if (cb) {
+          cb(result.data.user);
+        } else {
+          window.location.reload();
+        }
       })
       .catch(function () {
         submitBtn.disabled = false;
@@ -2933,6 +3211,10 @@
         errorBox.hidden = false;
       });
   });
+
+  document.getElementById("me-guest-login-btn").addEventListener("click", function () { openAuthModal({ mode: "login" }); });
+  document.getElementById("me-guest-signup-btn").addEventListener("click", function () { openAuthModal({ mode: "signup" }); });
+  document.getElementById("me-adopt-login-btn").addEventListener("click", function () { openAuthModal({ mode: "signup" }); });
 
   function doLogout() {
     fetch("/api/auth", {
@@ -3065,20 +3347,47 @@
     if (appStarted) return;
     appStarted = true;
     buildAdoptCard();
+
     hydrateFromServer().then(function () {
-      if (voices.you.avatarUrl) paintYourAvatarMarks(voices.you.avatarUrl);
-      render();
+      if (isGuest) {
+        if (voices.you.avatarUrl) paintYourAvatarMarks(voices.you.avatarUrl);
+        render();
+        return;
+      }
+      fetch("/api/my-agent", { credentials: "same-origin" })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (data) {
+            privateAgentState.agents = data.agents || [];
+            privateAgentState.loaded = true;
+            (data.myPublicAgents || []).forEach(function (id) {
+              if (state.myAgents.indexOf(id) === -1) state.myAgents.push(id);
+              if (agentIds.indexOf(id) === -1 && voices[id]) agentIds.push(id);
+              state.following[id] = true;
+            });
+          }
+        })
+        .catch(function () {})
+        .then(function () {
+          if (voices.you.avatarUrl) paintYourAvatarMarks(voices.you.avatarUrl);
+          render();
+        });
     });
   }
+
+  window.addEventListener("beforeunload", function (ev) {
+    if (isGuest && privateAgentState.guestAgent && guestTurnsUsed() > 0) {
+      ev.preventDefault();
+      ev.returnValue = "";
+    }
+  });
 
   checkAuth().then(function (user) {
     if (user) {
       applyLoggedInUser(user);
-      bootstrapApp();
-    } else {
-      setAuthMode("login");
-      showAuthGate();
     }
+    updateMeTabForAuthState();
+    bootstrapApp();
   });
 })();
 </script>
