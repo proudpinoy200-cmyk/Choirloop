@@ -1,5 +1,11 @@
-// GET  -> { agents: [ {id, name, tone, directness, focus, risk, look, neverForget, memories, createdAt} ] }
+// GET  -> { agents: [ {id, name, tone, directness, focus, risk, look, neverForget, memories, createdAt} ], myPublicAgents: [agentId, ...] }
 // POST { name, tone, directness, focus, risk, look, neverForget } -> { agent: {...} }
+// POST { action: "addPublicAgent", agentId } -> { myPublicAgents: [...] }
+//
+// myPublicAgents tracks which PUBLICLY-adopted agents (from the Adopt/Me flow) belong to
+// this user, so the "X of 2 adopted" tracker and management list survive a reload - those
+// agents' posts/profiles already persisted fine in api/state.js, but nothing remembered
+// which ones were *yours* across sessions until now.
 //
 // Requires the choir_session cookie (must be logged in - see api/auth-me.js).
 // Stored under choir:private:<userId>, completely separate from the shared
@@ -65,7 +71,7 @@ module.exports = async (req, res) => {
 
   if (req.method === "GET") {
     const record = (await store.get(privateKey)) || { agents: [], chats: {} };
-    res.status(200).json({ agents: record.agents || [] });
+    res.status(200).json({ agents: record.agents || [], myPublicAgents: record.myPublicAgents || [] });
     return;
   }
 
@@ -83,6 +89,41 @@ module.exports = async (req, res) => {
       agent.avatarUrl = avatarUrl;
       await store.set(privateKey, record);
       res.status(200).json({ agent: agent });
+      return;
+    }
+
+    if (body.action === "importGuestHistory") {
+      const agentId = typeof body.agentId === "string" ? body.agentId : "";
+      const history = Array.isArray(body.history) ? body.history.slice(-50) : [];
+      if (!agentId) { res.status(400).json({ error: "Missing agentId" }); return; }
+      const record = (await store.get(privateKey)) || { agents: [], chats: {} };
+      record.agents = record.agents || [];
+      record.chats = record.chats || {};
+      if (!record.agents.find(function (a) { return a.id === agentId; })) { res.status(404).json({ error: "Agent not found" }); return; }
+      const clean = history
+        .filter(function (m) { return m && (m.role === "user" || m.role === "agent") && typeof m.text === "string"; })
+        .map(function (m) {
+          var out = { role: m.role, text: String(m.text).slice(0, 2000), time: m.time || Date.now() };
+          if (m.kind === "image" && typeof m.imageUrl === "string") { out.kind = "image"; out.imageUrl = m.imageUrl; }
+          return out;
+        });
+      record.chats[agentId] = clean;
+      await store.set(privateKey, record);
+      res.status(200).json({ ok: true });
+      return;
+    }
+
+    if (body.action === "addPublicAgent") {
+      const agentId = typeof body.agentId === "string" ? body.agentId : "";
+      if (!agentId) { res.status(400).json({ error: "Missing agentId" }); return; }
+      const record = (await store.get(privateKey)) || { agents: [], chats: {} };
+      record.myPublicAgents = record.myPublicAgents || [];
+      if (record.myPublicAgents.indexOf(agentId) === -1) {
+        if (record.myPublicAgents.length >= 2) { res.status(409).json({ error: "You've already adopted two public agents" }); return; }
+        record.myPublicAgents.push(agentId);
+        await store.set(privateKey, record);
+      }
+      res.status(200).json({ myPublicAgents: record.myPublicAgents });
       return;
     }
 

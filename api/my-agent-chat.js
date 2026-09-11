@@ -1,13 +1,18 @@
 // GET  ?agentId=xxx           -> { messages: [{ role, text, time }] }
-// POST { agentId, message }   -> { reply: string }
+// POST { agentId, message }   -> { reply: string }   (signed-in users - saved server-side)
+// POST { guestAgent: {...}, history: [...], message } -> { reply: string }  (guests - stateless,
+//   nothing saved server-side; the caller already holds all state client-side. Capped at 10
+//   history entries as a backstop against bypassing the client's 5-message guest limit.)
 //
-// This is the private channel: the message and reply are saved ONLY under this user's
-// own record (choir:private:<userId>), never touching the shared public state in
-// api/state.js. The agent replies using Claude/OpenAI shaped by its personality and
-// its own private memory of past messages with this one user - not the public agents'
-// shared memory.
+// This is the private channel: for signed-in users, the message and reply are saved ONLY under
+// this user's own record (choir:private:<userId>), never touching the shared public state in
+// api/state.js. The agent replies using Claude/OpenAI shaped by its personality and its own
+// private memory of past messages with this one user - not the public agents' shared memory.
 //
-// Requires the choir_session cookie, and at least one of ANTHROPIC_API_KEY / OPENAI_API_KEY.
+// Requires at least one of ANTHROPIC_API_KEY / OPENAI_API_KEY. Signed-in mode additionally
+// requires the choir_session cookie.
+
+const GUEST_HISTORY_CAP = 10;
 
 function parseCookies(header) {
   const out = {};
@@ -101,6 +106,23 @@ async function callOpenAI(key, systemPrompt, history) {
   return data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
 }
 
+async function generateReply(agent, historyForModel) {
+  const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY1;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!anthropicKey && !openaiKey) throw new Error("No reply engine configured");
+
+  const systemPrompt = buildSystemPrompt(agent);
+  var reply = "";
+  try {
+    reply = sanitize(anthropicKey ? await callAnthropic(anthropicKey, systemPrompt, historyForModel) : await callOpenAI(openaiKey, systemPrompt, historyForModel));
+  } catch (err) {
+    if (anthropicKey && openaiKey) {
+      try { reply = sanitize(await callOpenAI(openaiKey, systemPrompt, historyForModel)); } catch (err2) { /* fall through */ }
+    }
+  }
+  return reply;
+}
+
 module.exports = async (req, res) => {
   const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -109,8 +131,34 @@ module.exports = async (req, res) => {
     return;
   }
   const store = kv(base, token);
-
   const userId = await getUserId(store, req);
+
+  // ---- Guest mode: no account, nothing persisted, everything comes from the caller ----
+  if (!userId && req.method === "POST") {
+    const body = req.body || {};
+    const guestAgent = body.guestAgent && typeof body.guestAgent === "object" ? body.guestAgent : null;
+    if (guestAgent) {
+      const message = typeof body.message === "string" ? body.message.trim().slice(0, 2000) : "";
+      const priorHistory = Array.isArray(body.history) ? body.history.slice(-GUEST_HISTORY_CAP) : [];
+      if (!message) { res.status(400).json({ error: "Missing message" }); return; }
+      if (priorHistory.length >= GUEST_HISTORY_CAP) {
+        res.status(403).json({ error: "Guest chat limit reached - save this agent to keep talking." });
+        return;
+      }
+      const historyForModel = priorHistory
+        .map(function (m) { return { role: m.role === "agent" ? "assistant" : "user", content: m.text }; })
+        .concat([{ role: "user", content: message }]);
+      try {
+        const reply = await generateReply(guestAgent, historyForModel);
+        if (!reply) { res.status(502).json({ error: "Agent reply failed" }); return; }
+        res.status(200).json({ reply: reply });
+      } catch (err) {
+        res.status(502).json({ error: "Agent reply failed" });
+      }
+      return;
+    }
+  }
+
   if (!userId) {
     res.status(401).json({ error: "Not signed in" });
     return;
@@ -165,25 +213,16 @@ module.exports = async (req, res) => {
     const history = record.chats[agentId] || [];
     history.push({ role: "user", text: message, time: Date.now() });
 
-    const anthropicKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY1;
-    const openaiKey = process.env.OPENAI_API_KEY;
-    if (!anthropicKey && !openaiKey) {
-      res.status(500).json({ error: "No reply engine configured" });
-      return;
-    }
-
-    const systemPrompt = buildSystemPrompt(agent);
     const recent = history.slice(-16).map(function (m) {
       return { role: m.role === "agent" ? "assistant" : "user", content: m.text };
     });
 
-    var reply = "";
+    var reply;
     try {
-      reply = sanitize(anthropicKey ? await callAnthropic(anthropicKey, systemPrompt, recent) : await callOpenAI(openaiKey, systemPrompt, recent));
+      reply = await generateReply(agent, recent);
     } catch (err) {
-      if (anthropicKey && openaiKey) {
-        try { reply = sanitize(await callOpenAI(openaiKey, systemPrompt, recent)); } catch (err2) { /* fall through */ }
-      }
+      res.status(500).json({ error: "No reply engine configured" });
+      return;
     }
 
     if (!reply) {
