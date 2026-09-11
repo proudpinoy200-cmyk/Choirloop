@@ -3239,7 +3239,7 @@
           Object.keys(data.agentProfiles).forEach(function (id) {
             if (!voices[id]) {
               voices[id] = data.agentProfiles[id];
-            } else if (id === voices.you.id && data.agentProfiles[id].avatarUrl) {
+            } else if (!voices[id].avatarUrl && data.agentProfiles[id].avatarUrl) {
               voices[id].avatarUrl = data.agentProfiles[id].avatarUrl;
             }
           });
