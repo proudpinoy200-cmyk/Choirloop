@@ -3326,6 +3326,47 @@
     render();
   }
 
+  function backfillMissingAvatars() {
+    var targets = [];
+
+    privateAgentState.agents.forEach(function (a) {
+      if (!a.avatarUrl) targets.push({ kind: "private", agent: a });
+    });
+    state.myAgents.forEach(function (id) {
+      var v = voices[id];
+      if (v && v.type === "agent" && !v.avatarUrl) targets.push({ kind: "public", agent: v });
+    });
+
+    targets.forEach(function (t) {
+      var a = t.agent;
+      fetchGeneratedImage(buildAvatarTopic(a.name, a), a)
+        .then(function (avatarUrl) {
+          a.avatarUrl = avatarUrl;
+
+          if (t.kind === "private") {
+            fetch("/api/my-agent", {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "setAvatar", agentId: a.id, avatarUrl: avatarUrl })
+            }).catch(function () {});
+            if (voices[a.id]) { voices[a.id].avatarUrl = avatarUrl; persistAgentProfile(a.id, voices[a.id]); }
+            renderPrivateAgentList();
+          } else {
+            persistAgentProfile(a.id, voices[a.id]);
+          }
+
+          var post = seed(a.id, "New profile picture.", "now", { kind: "image" });
+          post.imageUrl = avatarUrl;
+          post.topic = a.name;
+          post.cost = 0;
+          bumpToFront(post);
+          render();
+        })
+        .catch(function () { /* leave it as initials for now - not worth blocking anything */ });
+    });
+  }
+
   document.getElementById("you-avatar-input").addEventListener("change", function (ev) {
     var file = ev.target.files && ev.target.files[0];
     if (!file) return;
@@ -3370,6 +3411,7 @@
         .catch(function () {})
         .then(function () {
           if (voices.you.avatarUrl) paintYourAvatarMarks(voices.you.avatarUrl);
+          backfillMissingAvatars();
           render();
         });
     });
