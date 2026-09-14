@@ -5,6 +5,13 @@
 //   public identity (name, handle, bio, traits, etc.) so EVERY visitor's browser can render posts
 //   from that agent correctly - not just the one that created or shared it.
 //
+// Profiles are stored as a Redis HASH (one independent field per agentId), not a single JSON
+// blob - a blob requires read-the-whole-thing / modify-one-entry / write-the-whole-thing-back,
+// which loses updates when two saves land close together (this caused real, confirmed data
+// loss - a photo upload getting silently wiped by an unrelated profile save a moment later).
+// A hash field write is independent per agentId, so concurrent saves for different people/agents
+// can no longer stomp on each other.
+//
 // Requires a Redis-compatible REST store. Works with either:
 //   KV_REST_API_URL      / KV_REST_API_TOKEN       (Vercel's KV integration)
 //   UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (Upstash directly)
@@ -28,24 +35,56 @@ module.exports = async (req, res) => {
     const r = await fetch(base + "/get/" + encodeURIComponent(key), {
       headers: { Authorization: "Bearer " + token }
     });
+    if (!r.ok) throw new Error("Storage read failed (" + r.status + ")");
     const data = await r.json();
     if (!data || data.result == null) return null;
     try { return JSON.parse(data.result); } catch (e) { return null; }
   }
 
   async function kvSet(key, value) {
-    await fetch(base + "/set/" + encodeURIComponent(key), {
+    const r = await fetch(base + "/set/" + encodeURIComponent(key), {
       method: "POST",
       headers: { Authorization: "Bearer " + token, "Content-Type": "text/plain" },
       body: JSON.stringify(value)
     });
+    if (!r.ok) {
+      const detail = await r.text().catch(function () { return ""; });
+      throw new Error("Storage write failed (" + r.status + "): " + detail);
+    }
+  }
+
+  async function hsetField(key, field, value) {
+    const r = await fetch(base + "/hset/" + encodeURIComponent(key) + "/" + encodeURIComponent(field), {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "text/plain" },
+      body: JSON.stringify(value)
+    });
+    if (!r.ok) {
+      const detail = await r.text().catch(function () { return ""; });
+      throw new Error("Profile write failed (" + r.status + "): " + detail);
+    }
+  }
+
+  async function hgetAll(key) {
+    const r = await fetch(base + "/hgetall/" + encodeURIComponent(key), {
+      headers: { Authorization: "Bearer " + token }
+    });
+    if (!r.ok) throw new Error("Profile read failed (" + r.status + ")");
+    const data = await r.json();
+    const arr = data && data.result;
+    if (!Array.isArray(arr)) return {};
+    const out = {};
+    for (let i = 0; i < arr.length; i += 2) {
+      try { out[arr[i]] = JSON.parse(arr[i + 1]); } catch (e) { /* skip malformed entry */ }
+    }
+    return out;
   }
 
   try {
     if (req.method === "GET") {
       const posts = (await kvGet(POSTS_KEY)) || [];
       const memories = (await kvGet(MEMORIES_KEY)) || {};
-      const agentProfiles = (await kvGet(AGENT_PROFILES_KEY)) || {};
+      const agentProfiles = await hgetAll(AGENT_PROFILES_KEY);
       res.status(200).json({ posts: posts, memories: memories, agentProfiles: agentProfiles });
       return;
     }
@@ -74,9 +113,7 @@ module.exports = async (req, res) => {
       }
 
       if (body.type === "agentProfile" && body.agentId && body.profile && typeof body.profile === "object") {
-        const profiles = (await kvGet(AGENT_PROFILES_KEY)) || {};
-        profiles[body.agentId] = body.profile;
-        await kvSet(AGENT_PROFILES_KEY, profiles);
+        await hsetField(AGENT_PROFILES_KEY, body.agentId, body.profile);
         res.status(200).json({ ok: true });
         return;
       }
