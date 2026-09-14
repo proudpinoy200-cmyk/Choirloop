@@ -142,7 +142,7 @@ async function callOpenAIText(key, systemPrompt, topic) {
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
     body: JSON.stringify({
       model: "gpt-5.4-mini",
-      max_tokens: 150,
+      max_completion_tokens: 150,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: topic }

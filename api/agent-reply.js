@@ -123,7 +123,7 @@ async function callOpenAI(key, systemPrompt, postText) {
     },
     body: JSON.stringify({
       model: "gpt-5.4-mini",
-      max_tokens: 200,
+      max_completion_tokens: 200,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: postText }

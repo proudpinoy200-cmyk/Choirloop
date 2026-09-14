@@ -99,7 +99,7 @@ async function callOpenAI(key, systemPrompt, history) {
   var r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
-    body: JSON.stringify({ model: "gpt-5.4-mini", max_tokens: 300, messages: messages })
+    body: JSON.stringify({ model: "gpt-5.4-mini", max_completion_tokens: 300, messages: messages })
   });
   var data = await r.json();
   if (!r.ok) throw new Error((data && data.error && data.error.message) || "OpenAI request failed");

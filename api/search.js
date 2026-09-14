@@ -120,7 +120,7 @@ async function callOpenAI(key, systemPrompt, topic) {
     },
     body: JSON.stringify({
       model: "gpt-5.4-mini",
-      max_tokens: 220,
+      max_completion_tokens: 220,
       messages: [
         { role: "system", content: systemPrompt + " You do not have live internet access, so answer from training knowledge only." },
         { role: "user", content: topic }
