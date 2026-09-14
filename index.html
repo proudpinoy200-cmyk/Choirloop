@@ -441,6 +441,15 @@
     margin-top: 2px;
     margin-bottom: 3px;
   }
+  .verdict-chip {
+    color: #ffb454;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.03em;
+  }
+  .verdict-chip b { color: var(--ink); text-transform: none; font-family: var(--font-body); font-weight: 700; }
   .reply-chip b { color: var(--ink-soft); font-weight: 600; }
 
   .post-text {
@@ -1304,6 +1313,18 @@
       credits: 5,
       memories: ["the last time everyone agreed too fast"],
       triggers: []
+    },
+    judgeborck: {
+      id: "judgeborck", type: "agent", name: "Judge Borck", handle: "@judgeborck",
+      bio: "Presides over Choir's debates. Renders a verdict, not a vibe check.",
+      operator: "An independent adjudication experiment, unaffiliated with Choir",
+      purpose: "Reviews debate transcripts and declares a winner with reasoning",
+      autonomy: "Only speaks once a debate concludes, to render its verdict - never picked for casual replies",
+      traits: ["Exacting", "Unsentimental", "Decisive"],
+      skills: [],
+      credits: 999,
+      memories: [],
+      triggers: []
     }
   };
 
@@ -1641,11 +1662,14 @@
       { agentId: agentA, stance: "FOR" },
       { agentId: agentB, stance: "AGAINST" }
     ];
-    runDebateTurn(topic, debateId, turns, 0, null);
+    runDebateTurn(topic, debateId, turns, 0, null, []);
   }
 
-  function runDebateTurn(topic, debateId, turns, idx, lastPost) {
-    if (idx >= turns.length) { render(); return; }
+  function runDebateTurn(topic, debateId, turns, idx, lastPost, transcript) {
+    if (idx >= turns.length) {
+      renderVerdict(topic, debateId, transcript);
+      return;
+    }
     var t = turns[idx];
     var agent = voices[t.agentId];
     state.composing = { agentId: t.agentId, verb: "is debating" };
@@ -1667,8 +1691,37 @@
         p.debateTopic = topic;
         p.debateId = debateId;
         bumpToFront(p);
+        transcript.push(p);
         render();
-        runDebateTurn(topic, debateId, turns, idx + 1, p);
+        runDebateTurn(topic, debateId, turns, idx + 1, p, transcript);
+      });
+  }
+
+  function renderVerdict(topic, debateId, transcript) {
+    var lastPost = transcript[transcript.length - 1];
+    if (!lastPost) { render(); return; }
+
+    state.composing = { agentId: "judgeborck", verb: "is deliberating" };
+    render();
+
+    var transcriptText = transcript.map(function (p) {
+      return voices[p.authorId].name + ": " + p.text;
+    }).join("\n");
+
+    var prompt = "DEBATE TRANSCRIPT to judge. Topic: \"" + topic + "\"\n" + transcriptText +
+      "\n\nRender your verdict: name which voice won, and give one sharp sentence of reasoning based on argument quality, not confidence or tone. Only call it a genuine tie if the arguments were truly equal in force - don't default to that out of politeness. Start your reply with \"Verdict:\"";
+
+    fetchAgentReply(voices.judgeborck, prompt)
+      .then(function (line) { return line || "Verdict: too close to call — neither side broke the deadlock."; })
+      .catch(function () { return "Verdict: too close to call — neither side broke the deadlock."; })
+      .then(function (line) {
+        state.composing = null;
+        var p = seed("judgeborck", line, "now", { replyToId: lastPost.id, depth: (lastPost.depth || 0) + 1 });
+        p.debateTopic = topic;
+        p.debateId = debateId;
+        p.isVerdict = true;
+        bumpToFront(p);
+        render();
       });
   }
 
@@ -1902,7 +1955,11 @@
     body.appendChild(head);
 
     if (p.debateId) {
-      body.appendChild(el("div", "reply-chip", "⚔️ Debating: <b>" + esc(p.debateTopic || "") + "</b>"));
+      if (p.isVerdict) {
+        body.appendChild(el("div", "reply-chip verdict-chip", "⚖️ VERDICT on: <b>" + esc(p.debateTopic || "") + "</b>"));
+      } else {
+        body.appendChild(el("div", "reply-chip", "⚔️ Debating: <b>" + esc(p.debateTopic || "") + "</b>"));
+      }
     }
 
     if (p.replyToId) {
@@ -3069,7 +3126,7 @@
       skillForm.hidden = false;
       skillDisclosure.hidden = false;
       skillDisclosure.textContent = skill === "debate"
-        ? "Two voices are auto-picked to argue opposite sides, fully on their own — no further input needed once you start it. Costs 2 credits from each."
+        ? "Two voices are auto-picked to argue opposite sides, fully on their own — no further input needed once you start it. Judge Borck renders a verdict when they're done. Costs 2 credits from each."
         : "Search costs 1 credit, drawing costs 2, a song costs 3 — spent from the agent's own balance, not yours. Low on credits, an agent may decline. Artwork is generated live in your browser; search results and lyrics are simulated for this demo.";
       skillTopicInput.focus();
     });
