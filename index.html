@@ -1039,7 +1039,7 @@
         <div class="credit-line u-mono"><span id="you-credits">20</span> credits · <span class="credit-hint">free daily allowance</span></div>
         <div class="avatar-upload-row">
           <label class="avatar-upload-btn" for="you-avatar-input">Change photo</label>
-          <input type="file" id="you-avatar-input" accept="image/png,image/jpeg,image/webp" class="visually-hidden" />
+          <input type="file" id="you-avatar-input" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" class="visually-hidden" />
         </div>
         <div class="credit-line"><button type="button" class="support-btn" id="logout-btn">Log out</button></div>
       </div>
@@ -1126,7 +1126,7 @@
         </div>
         <div class="avatar-upload-row">
           <label class="avatar-upload-btn" for="me-avatar-input">Change photo</label>
-          <input type="file" id="me-avatar-input" accept="image/png,image/jpeg,image/webp" class="visually-hidden" />
+          <input type="file" id="me-avatar-input" accept="image/png,image/jpeg,image/webp,image/heic,image/heif" class="visually-hidden" />
         </div>
         <button type="button" class="support-btn" id="me-logout-btn">Log out</button>
       </div>
@@ -2382,7 +2382,7 @@
       var fileInput = document.createElement("input");
       fileInput.type = "file";
       fileInput.id = uploadId;
-      fileInput.accept = "image/png,image/jpeg,image/webp";
+      fileInput.accept = "image/png,image/jpeg,image/webp,image/heic,image/heif";
       fileInput.className = "visually-hidden";
       fileInput.addEventListener("change", function (ev) {
         var file = ev.target.files && ev.target.files[0];
@@ -2532,7 +2532,7 @@
         var fileInput = document.createElement("input");
         fileInput.type = "file";
         fileInput.id = uploadId;
-        fileInput.accept = "image/png,image/jpeg,image/webp";
+        fileInput.accept = "image/png,image/jpeg,image/webp,image/heic,image/heif";
         fileInput.className = "visually-hidden";
         fileInput.addEventListener("click", function (ev) { ev.stopPropagation(); });
         fileInput.addEventListener("change", function (ev) {
@@ -3500,17 +3500,40 @@
     }).then(function (r) { return r.ok; }).catch(function () { return false; });
   }
 
-  function readFileAsDataUrl(file) {
+  function fileToAvatarJpeg(file, maxSize) {
+    maxSize = maxSize || 640;
     return new Promise(function (resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function () { resolve(reader.result); };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
+      var img = new Image();
+      var objectUrl = URL.createObjectURL(file);
+      img.onload = function () {
+        URL.revokeObjectURL(objectUrl);
+        var w = img.naturalWidth || img.width;
+        var h = img.naturalHeight || img.height;
+        if (!w || !h) { reject(new Error("Couldn't read that image")); return; }
+        var scale = Math.min(1, maxSize / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * scale));
+        var ch = Math.max(1, Math.round(h * scale));
+        var canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, cw, ch);
+        try {
+          resolve(canvas.toDataURL("image/jpeg", 0.88));
+        } catch (e) {
+          reject(e);
+        }
+      };
+      img.onerror = function () {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Couldn't read that image — try a different photo"));
+      };
+      img.src = objectUrl;
     });
   }
 
   function uploadAvatarFile(file) {
-    return readFileAsDataUrl(file).then(function (dataUrl) {
+    return fileToAvatarJpeg(file).then(function (dataUrl) {
       return fetch("/api/upload-avatar", {
         method: "POST",
         credentials: "same-origin",
