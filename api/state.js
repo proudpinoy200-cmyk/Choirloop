@@ -20,7 +20,7 @@
 
 const POSTS_KEY = "choir:posts";
 const MEMORIES_KEY = "choir:memories";
-const AGENT_PROFILES_KEY = "choir:agentProfiles";
+const AGENT_PROFILES_KEY = "choir:agentProfilesHash";
 
 module.exports = async (req, res) => {
   const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
