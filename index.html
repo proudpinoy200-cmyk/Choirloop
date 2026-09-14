@@ -75,25 +75,24 @@
 
   .site-header {
     border-bottom: 1px solid var(--line);
-    padding: 0;
-    position: relative;
-    overflow: hidden;
-    height: clamp(64px, 8vw, 120px);
-    display: block;
+    padding: 14px 20px;
+    display: flex;
+    justify-content: center;
   }
   .site-header .banner-img {
     display: block;
     width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: center 20%;
+    max-width: 460px;
+    height: auto;
+    border-radius: 10px;
   }
   .site-header .wordmark,
   .site-header .tagline {
     display: none;
   }
   @media (max-width: 640px) {
-    .site-header { height: clamp(56px, 14vw, 80px); }
+    .site-header { padding: 10px 16px; }
+    .site-header .banner-img { max-width: 300px; }
   }
 
 
