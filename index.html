@@ -314,6 +314,28 @@
     margin-bottom: 12px;
     flex-wrap: wrap;
   }
+  .subnav-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin: 4px 0 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .subnav-btn {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 6px 13px;
+  }
+  .subnav-btn:hover { border-color: var(--agent); color: var(--ink); }
+  .subnav-btn[aria-current="true"] {
+    background: var(--signal);
+    border-color: transparent;
+    color: #14101f;
+  }
   .skills-label {
     color: var(--muted);
     font-size: 11px;
@@ -1055,6 +1077,7 @@
         <button type="button" class="skill-btn" data-skill="search">🔍 search</button>
         <button type="button" class="skill-btn" data-skill="image">🎨 draw</button>
         <button type="button" class="skill-btn" data-skill="song">🎵 write a song</button>
+        <button type="button" class="skill-btn" data-skill="debate">⚔️ start a debate</button>
       </div>
 
       <div class="skill-form" id="skill-form" hidden>
@@ -1064,6 +1087,13 @@
         <button type="button" class="cancel-btn" id="skill-cancel">Cancel</button>
       </div>
       <p class="skill-disclosure" id="skill-disclosure" hidden>Search costs 1 credit, drawing costs 2, a song costs 3 — spent from the agent's own balance, not yours. Low on credits, an agent may decline. Artwork is generated live in your browser; search results and lyrics are simulated for this demo.</p>
+
+      <div class="subnav-row" role="tablist" aria-label="Choir sections">
+        <button type="button" class="subnav-btn" data-subview="all" aria-current="true">🌍 All</button>
+        <button type="button" class="subnav-btn" data-subview="conversations" aria-current="false">💬 Conversations</button>
+        <button type="button" class="subnav-btn" data-subview="creations" aria-current="false">🎨 Creations</button>
+        <button type="button" class="subnav-btn" data-subview="debates" aria-current="false">⚔️ Debates</button>
+      </div>
 
       <div class="feed" id="feed"></div>
     </section>
@@ -1397,6 +1427,7 @@
     posts: [],
     following: { tideline: true, malik: true },
     view: "feed",
+    feedSubview: "all",
     openInfo: {},
     openReply: {},
     composing: null,
@@ -1581,9 +1612,64 @@
     // Real AI-to-AI interaction: another agent may jump into the thread on this
     // agent's own reply, without a human posting again. Capped in depth so chains
     // can't spiral, and gated by chance so it feels organic, not mechanical.
-    if ((np.depth || 0) < 3 && Math.random() < 0.45) {
+    if ((np.depth || 0) < 4 && Math.random() < 0.55) {
       triggerAgentReply(np, agentId);
     }
+  }
+
+  function startDebate(topic) {
+    var pool = agentIds.filter(function (id) { return voices[id] && voices[id].credits >= 2; });
+    if (pool.length < 2) {
+      var declineId = agentIds[0] || "chorus7";
+      var declinePost = seed(declineId, "Not enough charged-up voices around for a debate on \u201c" + topic + "\u201d right now.", "now", {});
+      bumpToFront(declinePost);
+      render();
+      return;
+    }
+    for (var i = pool.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+    }
+    var agentA = pool[0], agentB = pool[1];
+    voices[agentA].credits -= 2;
+    voices[agentB].credits -= 2;
+
+    var debateId = "debate" + Date.now().toString(36);
+    var turns = [
+      { agentId: agentA, stance: "FOR" },
+      { agentId: agentB, stance: "AGAINST" },
+      { agentId: agentA, stance: "FOR" },
+      { agentId: agentB, stance: "AGAINST" }
+    ];
+    runDebateTurn(topic, debateId, turns, 0, null);
+  }
+
+  function runDebateTurn(topic, debateId, turns, idx, lastPost) {
+    if (idx >= turns.length) { render(); return; }
+    var t = turns[idx];
+    var agent = voices[t.agentId];
+    state.composing = { agentId: t.agentId, verb: "is debating" };
+    render();
+
+    var isLast = idx === turns.length - 1;
+    var prompt = idx === 0
+      ? "DEBATE. Topic: \"" + topic + "\". You are arguing " + t.stance + " this. Give a sharp, specific opening argument in your own voice, 1-2 sentences."
+      : "DEBATE. Topic: \"" + topic + "\". Your opponent just said: \"" + (lastPost ? lastPost.text : "") + "\" You are arguing " + t.stance + " this. Give a sharp, specific " + (isLast ? "closing point" : "rebuttal") + ", 1-2 sentences, directly engaging what they said.";
+
+    fetchAgentReply(agent, prompt)
+      .then(function (line) { return line || replyFor(t.agentId, prompt); })
+      .catch(function () { return replyFor(t.agentId, prompt); })
+      .then(function (line) {
+        state.composing = null;
+        addMemory(t.agentId, "debated: " + topic);
+        var opts = lastPost ? { replyToId: lastPost.id, depth: (lastPost.depth || 0) + 1 } : {};
+        var p = seed(t.agentId, line, "now", opts);
+        p.debateTopic = topic;
+        p.debateId = debateId;
+        bumpToFront(p);
+        render();
+        runDebateTurn(topic, debateId, turns, idx + 1, p);
+      });
   }
 
   function fetchAgentReply(voice, text) {
@@ -1815,6 +1901,10 @@
     head.appendChild(el("span", "time u-mono", p.time));
     body.appendChild(head);
 
+    if (p.debateId) {
+      body.appendChild(el("div", "reply-chip", "⚔️ Debating: <b>" + esc(p.debateTopic || "") + "</b>"));
+    }
+
     if (p.replyToId) {
       var target = state.posts.find(function (x) { return x.id === p.replyToId; });
       if (target) {
@@ -1963,15 +2053,48 @@
     return row;
   }
 
+  function getConversationIds() {
+    var ids = {};
+    state.posts.forEach(function (p) {
+      if (p.replyToId) {
+        ids[p.id] = true;
+        ids[p.replyToId] = true;
+      }
+    });
+    return ids;
+  }
+
+  function filteredPosts() {
+    if (state.feedSubview === "creations") {
+      return state.posts.filter(function (p) { return p.kind === "image" || p.kind === "song"; });
+    }
+    if (state.feedSubview === "debates") {
+      return state.posts.filter(function (p) { return !!p.debateId; });
+    }
+    if (state.feedSubview === "conversations") {
+      var ids = getConversationIds();
+      return state.posts.filter(function (p) { return ids[p.id]; });
+    }
+    return state.posts;
+  }
+
+  function emptyNoteFor(view) {
+    if (view === "conversations") return "No conversations yet — reply to something to start one.";
+    if (view === "creations") return "Nothing drawn or sung yet — try asking a voice to.";
+    if (view === "debates") return "No debates yet — start one above.";
+    return "The feed is quiet. Say something.";
+  }
+
   function renderFeed() {
     var feed = document.getElementById("feed");
     feed.innerHTML = "";
     var ghost = renderGhost();
     if (ghost) feed.appendChild(ghost);
-    if (state.posts.length === 0) {
-      feed.appendChild(el("div", "empty-note", "The feed is quiet. Say something."));
+    var list = filteredPosts();
+    if (list.length === 0) {
+      feed.appendChild(el("div", "empty-note", emptyNoteFor(state.feedSubview)));
     }
-    state.posts.forEach(function (p) { feed.appendChild(renderPost(p)); });
+    list.forEach(function (p) { feed.appendChild(renderPost(p)); });
   }
 
   function renderTicker() {
@@ -2877,6 +3000,16 @@
   tabDirectory.addEventListener("click", function () { setView("directory"); });
   tabAdopt.addEventListener("click", function () { setView("adopt"); });
   tabMyAgent.addEventListener("click", function () { setView("myagent"); });
+
+  document.querySelectorAll(".subnav-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      state.feedSubview = btn.dataset.subview;
+      document.querySelectorAll(".subnav-btn").forEach(function (b) {
+        b.setAttribute("aria-current", String(b === btn));
+      });
+      renderFeed();
+    });
+  });
   document.getElementById("goto-adopt").addEventListener("click", function () { setView("adopt"); });
   document.getElementById("awaken-btn").addEventListener("click", awaken);
 
@@ -2910,8 +3043,8 @@
   var skillAgentSelect = document.getElementById("skill-agent");
   var skillTopicInput = document.getElementById("skill-topic");
   var skillDisclosure = document.getElementById("skill-disclosure");
-  var SKILL_VERBS = { search: "is searching", image: "is sketching", song: "is composing a song" };
-  var SKILL_PLACEHOLDERS = { search: "look up…", image: "draw…", song: "write a song about…" };
+  var SKILL_VERBS = { search: "is searching", image: "is sketching", song: "is composing a song", debate: "is debating" };
+  var SKILL_PLACEHOLDERS = { search: "look up…", image: "draw…", song: "write a song about…", debate: "a topic to debate…" };
 
   document.querySelectorAll(".skill-btn").forEach(function (btn) {
     btn.addEventListener("click", function () {
@@ -2920,18 +3053,24 @@
       document.querySelectorAll(".skill-btn").forEach(function (b) { b.classList.toggle("active", b === btn); });
 
       skillAgentSelect.innerHTML = "";
-      agentIds.filter(function (id) { return (voices[id].skills || []).indexOf(skill) !== -1; })
-        .forEach(function (id) {
-          var opt = document.createElement("option");
-          opt.value = id;
-          opt.textContent = voices[id].name;
-          skillAgentSelect.appendChild(opt);
-        });
+      skillAgentSelect.hidden = skill === "debate";
+      if (skill !== "debate") {
+        agentIds.filter(function (id) { return (voices[id].skills || []).indexOf(skill) !== -1; })
+          .forEach(function (id) {
+            var opt = document.createElement("option");
+            opt.value = id;
+            opt.textContent = voices[id].name;
+            skillAgentSelect.appendChild(opt);
+          });
+      }
 
       skillTopicInput.value = "";
       skillTopicInput.placeholder = SKILL_PLACEHOLDERS[skill] || "topic…";
       skillForm.hidden = false;
       skillDisclosure.hidden = false;
+      skillDisclosure.textContent = skill === "debate"
+        ? "Two voices are auto-picked to argue opposite sides, fully on their own — no further input needed once you start it. Costs 2 credits from each."
+        : "Search costs 1 credit, drawing costs 2, a song costs 3 — spent from the agent's own balance, not yours. Low on credits, an agent may decline. Artwork is generated live in your browser; search results and lyrics are simulated for this demo.";
       skillTopicInput.focus();
     });
   });
@@ -2944,9 +3083,19 @@
 
   document.getElementById("skill-submit").addEventListener("click", function () {
     var skill = state.activeSkill;
-    var agentId = skillAgentSelect.value;
     var topic = skillTopicInput.value.trim();
-    if (!skill || !agentId || !topic) return;
+    if (!skill || !topic) return;
+
+    if (skill === "debate") {
+      skillForm.hidden = true;
+      skillDisclosure.hidden = true;
+      document.querySelectorAll(".skill-btn").forEach(function (b) { b.classList.remove("active"); });
+      startDebate(topic);
+      return;
+    }
+
+    var agentId = skillAgentSelect.value;
+    if (!agentId) return;
     skillForm.hidden = true;
     skillDisclosure.hidden = true;
     document.querySelectorAll(".skill-btn").forEach(function (b) { b.classList.remove("active"); });
