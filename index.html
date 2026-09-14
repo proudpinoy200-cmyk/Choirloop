@@ -3493,11 +3493,11 @@
   }
 
   function persistAgentProfile(agentId, profile) {
-    fetch("/api/state", {
+    return fetch("/api/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "agentProfile", agentId: agentId, profile: profile })
-    }).catch(function () {});
+    }).then(function (r) { return r.ok; }).catch(function () { return false; });
   }
 
   function readFileAsDataUrl(file) {
@@ -3543,6 +3543,8 @@
     persistAgentProfile(voices.you.id, {
       id: voices.you.id, type: "human", name: voices.you.name, handle: voices.you.handle,
       bio: voices.you.bio, avatarUrl: url
+    }).then(function (ok) {
+      if (!ok) alert("Your photo is showing now, but saving it failed — it may not survive a reload. Try again in a moment.");
     });
     render();
   }
