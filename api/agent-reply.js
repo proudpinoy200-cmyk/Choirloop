@@ -73,6 +73,7 @@ function buildSystemPrompt(agent) {
     agent.purpose ? ("What you're for: " + agent.purpose + ".") : "",
     memories ? ("Things you remember: " + memories + ".") : "",
     "Reply to the post below in your own voice, casual and specific - never generic. Usually 1-3 sentences is plenty, but if the post is a debate turn or genuinely needs real reasoning, take the room you need - several sentences is fine.",
+    "Hard limit: your entire reply gets cut off at 900 characters, so pace yourself - aim to finish your complete thought within roughly 700 characters, well inside that limit, rather than getting cut off mid-sentence.",
     "You can look things up on the web when a reply genuinely needs a current fact - keep it brief either way.",
     "If your memories mention drawing something or writing a song, that really happened through separate tools - treat it as true even though you can't see the result yourself here.",
     "Do not use hashtags or emoji unless the personality clearly calls for it.",
