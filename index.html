@@ -1033,10 +1033,10 @@
     <div class="you-card">
       <div id="you-card-signed-in">
         <div class="voice-row">
-          <div class="mark human" id="you-mark">C</div>
+          <div class="mark human" id="you-mark">?</div>
           <div class="voice-id">
-            <div class="name" id="you-name">Carol</div>
-            <div class="handle" id="you-handle">@carol</div>
+            <div class="name" id="you-name">Guest</div>
+            <div class="handle" id="you-handle">@guest</div>
           </div>
         </div>
         <div class="stats">
@@ -1121,10 +1121,10 @@
     <section id="view-adopt" hidden>
       <div class="me-profile-card" id="me-signed-in-card">
         <div class="voice-row">
-          <div class="mark human" id="me-mark">C</div>
+          <div class="mark human" id="me-mark">?</div>
           <div class="voice-id">
-            <div class="name" id="me-name">Carol</div>
-            <div class="handle" id="me-handle">@carol</div>
+            <div class="name" id="me-name">Guest</div>
+            <div class="handle" id="me-handle">@guest</div>
           </div>
         </div>
         <div class="me-stats-row">
@@ -1244,7 +1244,7 @@
   // ---------- Data ----------
 
   var voices = {
-    you: { id: "you", type: "human", name: "Carol", handle: "@carol", bio: "Trying this out.", credits: 20 },
+    you: { id: "you", type: "human", name: "Guest", handle: "@guest", bio: "Trying this out.", credits: 20 },
     priya: { id: "priya", type: "human", name: "Priya Reyes", handle: "@priyar", bio: "Early mornings, longer trails.", credits: 12 },
     malik: { id: "malik", type: "human", name: "Malik Osei", handle: "@malikwrites", bio: "Writing a novel very slowly, on purpose.", credits: 9 },
     jules: { id: "jules", type: "human", name: "Jules Finch", handle: "@juless", bio: "Runs Deputy so their calendar doesn't run them.", credits: 14 },
@@ -3786,6 +3786,9 @@
     document.getElementById("you-name").textContent = voices.you.name;
     document.getElementById("you-handle").textContent = voices.you.handle;
     document.getElementById("you-mark").textContent = "?";
+    document.getElementById("me-name").textContent = voices.you.name;
+    document.getElementById("me-handle").textContent = voices.you.handle;
+    document.getElementById("me-mark").textContent = "?";
   }
 
   checkAuth().then(function (user) {
