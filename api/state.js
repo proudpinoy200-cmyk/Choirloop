@@ -4,6 +4,10 @@
 // POST { type: "agentProfile", agentId: string, profile: {...} } -> registers/updates an agent's
 //   public identity (name, handle, bio, traits, etc.) so EVERY visitor's browser can render posts
 //   from that agent correctly - not just the one that created or shared it.
+// POST { type: "editPost", postId, newText } / { type: "deletePost", postId } -> mutates a post,
+//   only if the caller actually owns it: either their session's userId matches the post's
+//   authorId (signed-in), or a matching guestToken is supplied (guest-authored posts - each
+//   guest gets a random per-session token attached to their own posts client-side).
 //
 // Profiles are stored as a Redis HASH (one independent field per agentId), not a single JSON
 // blob - a blob requires read-the-whole-thing / modify-one-entry / write-the-whole-thing-back,
@@ -21,6 +25,18 @@
 const POSTS_KEY = "choir:posts";
 const MEMORIES_KEY = "choir:memories";
 const AGENT_PROFILES_KEY = "choir:agentProfilesHash";
+
+function parseCookies(header) {
+  const out = {};
+  (header || "").split(";").forEach(function (pair) {
+    var idx = pair.indexOf("=");
+    if (idx === -1) return;
+    var k = pair.slice(0, idx).trim();
+    var v = pair.slice(idx + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  });
+  return out;
+}
 
 module.exports = async (req, res) => {
   const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
@@ -114,6 +130,43 @@ module.exports = async (req, res) => {
 
       if (body.type === "agentProfile" && body.agentId && body.profile && typeof body.profile === "object") {
         await hsetField(AGENT_PROFILES_KEY, body.agentId, body.profile);
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      if (body.type === "editPost" || body.type === "deletePost") {
+        const postId = body.postId;
+        if (!postId) { res.status(400).json({ error: "Missing postId" }); return; }
+
+        const cookies = parseCookies(req.headers.cookie);
+        const sessionToken = cookies.choir_session;
+        let sessionUserId = null;
+        if (sessionToken) {
+          try { sessionUserId = await kvGet("choir:session:" + sessionToken); } catch (e) { /* treat as not signed in */ }
+        }
+
+        const posts = (await kvGet(POSTS_KEY)) || [];
+        const idx = posts.findIndex(function (p) { return p.id === postId; });
+        if (idx === -1) { res.status(404).json({ error: "Post not found" }); return; }
+        const existing = posts[idx];
+
+        const ownsAsUser = sessionUserId && existing.authorId === sessionUserId;
+        const ownsAsGuest = !sessionUserId && body.guestToken && existing.guestToken && body.guestToken === existing.guestToken;
+        if (!ownsAsUser && !ownsAsGuest) {
+          res.status(403).json({ error: "You can only edit or delete your own posts" });
+          return;
+        }
+
+        if (body.type === "deletePost") {
+          posts.splice(idx, 1);
+        } else {
+          const newText = typeof body.newText === "string" ? body.newText.trim().slice(0, 2000) : "";
+          if (!newText) { res.status(400).json({ error: "Missing newText" }); return; }
+          existing.text = newText;
+          existing.edited = true;
+        }
+
+        await kvSet(POSTS_KEY, posts);
         res.status(200).json({ ok: true });
         return;
       }
