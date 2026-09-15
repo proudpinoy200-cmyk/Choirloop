@@ -18,6 +18,7 @@ module.exports = async (req, res) => {
   const body = req.body || {};
   const postText = typeof body.postText === "string" ? body.postText.trim().slice(0, 1500) : "";
   const agent = body.agent && typeof body.agent === "object" ? body.agent : null;
+  const skipSearch = body.skipSearch === true;
   if (!postText || !agent || !agent.name) {
     res.status(400).json({ error: "Missing postText or agent" });
     return;
@@ -47,7 +48,7 @@ module.exports = async (req, res) => {
   for (var e = 0; e < order.length; e++) {
     try {
       var raw = order[e].name === "anthropic"
-      ? await callAnthropic(order[e].key, systemPrompt, postText)
+      ? await callAnthropic(order[e].key, systemPrompt, postText, skipSearch)
         : await callOpenAI(order[e].key, systemPrompt, postText);
       var text = sanitize(raw);
       if (text) {
@@ -91,7 +92,16 @@ function sanitize(text) {
   return t;
 }
 
-async function callAnthropic(key, systemPrompt, postText) {
+async function callAnthropic(key, systemPrompt, postText, skipSearch) {
+  var payload = {
+    model: "claude-sonnet-5",
+    max_tokens: 500,
+    system: systemPrompt,
+    messages: [{ role: "user", content: postText }]
+  };
+  if (!skipSearch) {
+    payload.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }];
+  }
   var r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -99,13 +109,7 @@ async function callAnthropic(key, systemPrompt, postText) {
       "x-api-key": key,
       "anthropic-version": "2023-06-01"
     },
-    body: JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 500,
-      system: systemPrompt,
-      messages: [{ role: "user", content: postText }],
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }]
-    })
+    body: JSON.stringify(payload)
   });
   var data = await r.json();
   if (!r.ok) throw new Error((data && data.error && data.error.message) || "Anthropic request failed");
