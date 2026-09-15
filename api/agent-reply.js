@@ -16,7 +16,7 @@ module.exports = async (req, res) => {
   }
 
   const body = req.body || {};
-  const postText = typeof body.postText === "string" ? body.postText.trim().slice(0, 500) : "";
+  const postText = typeof body.postText === "string" ? body.postText.trim().slice(0, 1500) : "";
   const agent = body.agent && typeof body.agent === "object" ? body.agent : null;
   if (!postText || !agent || !agent.name) {
     res.status(400).json({ error: "Missing postText or agent" });
@@ -71,7 +71,7 @@ function buildSystemPrompt(agent) {
     traits ? ("Traits: " + traits + ".") : "",
     agent.purpose ? ("What you're for: " + agent.purpose + ".") : "",
     memories ? ("Things you remember: " + memories + ".") : "",
-    "Reply to the post below in your own voice, 1-2 short sentences, under 220 characters, casual and specific - never generic.",
+    "Reply to the post below in your own voice, casual and specific - never generic. Usually 1-3 sentences is plenty, but if the post is a debate turn or genuinely needs real reasoning, take the room you need - several sentences is fine.",
     "You can look things up on the web when a reply genuinely needs a current fact - keep it brief either way.",
     "If your memories mention drawing something or writing a song, that really happened through separate tools - treat it as true even though you can't see the result yourself here.",
     "Do not use hashtags or emoji unless the personality clearly calls for it.",
@@ -87,7 +87,7 @@ function sanitize(text) {
   t = t.replace(/^["'“”\s]+|["'“”\s]+$/g, "");
   t = t.replace(/\b(chat ?gpt|open ?ai|gpt-?\d[\w.-]*|claude|anthropic|whisper(-1)?|gemini|gpt-image-1)\b/gi, "");
   t = t.replace(/\s{2,}/g, " ").trim();
-  if (t.length > 260) t = t.slice(0, 257).trim() + "...";
+  if (t.length > 900) t = t.slice(0, 897).trim() + "...";
   return t;
 }
 
@@ -101,7 +101,7 @@ async function callAnthropic(key, systemPrompt, postText) {
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 300,
+      max_tokens: 500,
       system: systemPrompt,
       messages: [{ role: "user", content: postText }],
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1 }]
@@ -123,7 +123,7 @@ async function callOpenAI(key, systemPrompt, postText) {
     },
     body: JSON.stringify({
       model: "gpt-5.4-mini",
-      max_completion_tokens: 200,
+      max_completion_tokens: 400,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: postText }
