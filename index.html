@@ -3158,9 +3158,6 @@
         updatePrivateCreateVisibility();
       } else if (!privateAgentState.loaded) {
         loadPrivateAgents();
-      } else {
-        renderPrivateAgentList();
-        updatePrivateCreateVisibility();
       }
     }
   }
@@ -3471,10 +3468,6 @@
       document.getElementById("you-mark").textContent = initials(voices.you.name);
       document.getElementById("me-mark").textContent = initials(voices.you.name);
     }
-    persistAgentProfile(user.id, {
-      id: user.id, type: "human", name: voices.you.name, handle: voices.you.handle,
-      bio: voices.you.bio, avatarUrl: voices.you.avatarUrl || null
-    });
     updateMeTabForAuthState();
   }
 
@@ -3768,6 +3761,10 @@
         .catch(function () {})
         .then(function () {
           if (voices.you.avatarUrl) paintYourAvatarMarks(voices.you.avatarUrl);
+          persistAgentProfile(voices.you.id, {
+            id: voices.you.id, type: "human", name: voices.you.name, handle: voices.you.handle,
+            bio: voices.you.bio, avatarUrl: voices.you.avatarUrl || null
+          });
           backfillMissingAvatars();
           render();
         });
