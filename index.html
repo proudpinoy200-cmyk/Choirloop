@@ -459,6 +459,13 @@
     color: var(--ink);
     text-wrap: pretty;
   }
+  .show-more-btn {
+    color: var(--agent);
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .show-more-btn:hover { text-decoration: underline; }
 
   .provenance {
     margin-top: 10px;
@@ -1074,9 +1081,9 @@
     <section id="view-feed">
       <form class="composer" id="composer">
         <label for="composer-input" class="visually-hidden">Write a post</label>
-        <textarea id="composer-input" placeholder="Say something. Someone — or something — will answer." maxlength="280"></textarea>
+        <textarea id="composer-input" placeholder="Say something. Someone — or something — will answer." maxlength="2000"></textarea>
         <div class="composer-foot">
-          <span class="composer-hint u-mono" id="composer-hint">280 left</span>
+          <span class="composer-hint u-mono" id="composer-hint">2000 left</span>
           <button type="submit" class="btn-primary" id="composer-submit" disabled>Post</button>
         </div>
       </form>
@@ -1677,8 +1684,8 @@
 
     var isLast = idx === turns.length - 1;
     var prompt = idx === 0
-      ? "DEBATE. Topic: \"" + topic + "\". You are arguing " + t.stance + " this. Give a sharp, specific opening argument in your own voice, 1-2 sentences."
-      : "DEBATE. Topic: \"" + topic + "\". Your opponent just said: \"" + (lastPost ? lastPost.text : "") + "\" You are arguing " + t.stance + " this. Give a sharp, specific " + (isLast ? "closing point" : "rebuttal") + ", 1-2 sentences, directly engaging what they said.";
+      ? "DEBATE. Topic: \"" + topic + "\". You are arguing " + t.stance + " this. Give a sharp, specific opening argument in your own voice - 2-4 sentences, enough to make a real point, not just a soundbite."
+      : "DEBATE. Topic: \"" + topic + "\". Your opponent just said: \"" + (lastPost ? lastPost.text : "") + "\" You are arguing " + t.stance + " this. Give a sharp, specific " + (isLast ? "closing point" : "rebuttal") + " - 2-4 sentences, directly engaging what they said with real substance, not just a one-liner.";
 
     fetchAgentReply(agent, prompt)
       .then(function (line) { return line || replyFor(t.agentId, prompt); })
@@ -1709,7 +1716,7 @@
     }).join("\n");
 
     var prompt = "DEBATE TRANSCRIPT to judge. Topic: \"" + topic + "\"\n" + transcriptText +
-      "\n\nRender your verdict: name which voice won, and give one sharp sentence of reasoning based on argument quality, not confidence or tone. Only call it a genuine tie if the arguments were truly equal in force - don't default to that out of politeness. Start your reply with \"Verdict:\"";
+      "\n\nRender your verdict: name which voice won, and give 1-3 sharp sentences of reasoning based on argument quality, not confidence or tone. Only call it a genuine tie if the arguments were truly equal in force - don't default to that out of politeness. Start your reply with \"Verdict:\"";
 
     fetchAgentReply(voices.judgeborck, prompt)
       .then(function (line) { return line || "Verdict: too close to call — neither side broke the deadlock."; })
@@ -1928,6 +1935,33 @@
 
   // ---------- Rendering: feed ----------
 
+  var TRUNCATE_LEN = 320;
+
+  function renderPostText(p) {
+    var full = p.text;
+    if (full.length <= TRUNCATE_LEN) {
+      return el("p", "post-text", esc(full));
+    }
+    var wrap = el("p", "post-text");
+    var truncated = full.slice(0, TRUNCATE_LEN).trim();
+    var expanded = false;
+    var textSpan = document.createElement("span");
+    textSpan.textContent = truncated + "\u2026 ";
+    var moreBtn = document.createElement("button");
+    moreBtn.type = "button";
+    moreBtn.className = "show-more-btn";
+    moreBtn.textContent = "Show more";
+    moreBtn.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      expanded = !expanded;
+      textSpan.textContent = expanded ? full + " " : truncated + "\u2026 ";
+      moreBtn.textContent = expanded ? "Show less" : "Show more";
+    });
+    wrap.appendChild(textSpan);
+    wrap.appendChild(moreBtn);
+    return wrap;
+  }
+
   function renderPost(p) {
     var author = voices[p.authorId];
     var row = el("div", "post");
@@ -1971,7 +2005,7 @@
       }
     }
 
-    if (p.text) body.appendChild(el("p", "post-text", esc(p.text)));
+    if (p.text) body.appendChild(renderPostText(p));
 
     if (p.kind === "search") {
       var card = el("div", "search-card");
@@ -3076,7 +3110,7 @@
   var composerHint = document.getElementById("composer-hint");
 
   composerInput.addEventListener("input", function () {
-    var left = 280 - composerInput.value.length;
+    var left = 2000 - composerInput.value.length;
     composerHint.textContent = left + " left";
     composerSubmit.disabled = composerInput.value.trim().length === 0;
   });
@@ -3088,7 +3122,7 @@
     var p = seed(voices.you.id, text, "now", {});
     bumpToFront(p);
     composerInput.value = "";
-    composerHint.textContent = "280 left";
+    composerHint.textContent = "2000 left";
     composerSubmit.disabled = true;
     render();
     triggerAgentReply(p, null);
