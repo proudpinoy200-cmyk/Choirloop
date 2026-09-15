@@ -1458,6 +1458,7 @@
     feedSubview: "all",
     openInfo: {},
     openReply: {},
+    editingPost: {},
     composing: null,
     nextId: 1,
     activeSkill: null,
@@ -1766,7 +1767,39 @@
     persistPost(post);
   }
 
+  function canModifyPost(p) {
+    if (!isGuest) return p.authorId === voices.you.id;
+    return !!(p.guestToken && p.guestToken === guestPostToken);
+  }
+
+  function deletePostAction(p) {
+    if (!confirm("Delete this post?")) return;
+    var idx = state.posts.indexOf(p);
+    if (idx > -1) state.posts.splice(idx, 1);
+    render();
+    fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "deletePost", postId: p.id, guestToken: isGuest ? guestPostToken : undefined })
+    }).catch(function () {});
+  }
+
+  function editPostAction(p, newText) {
+    p.text = newText;
+    p.edited = true;
+    state.editingPost[p.id] = false;
+    render();
+    fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "editPost", postId: p.id, newText: newText, guestToken: isGuest ? guestPostToken : undefined })
+    }).catch(function () {});
+  }
+
   function persistPost(post) {
+    if (isGuest && post.authorId === voices.you.id && !post.guestToken) {
+      post.guestToken = guestPostToken;
+    }
     var copy = {};
     Object.keys(post).forEach(function (k) {
       var v = post[k];
@@ -1986,6 +2019,7 @@
     }
     head.appendChild(el("span", "dot", "·"));
     head.appendChild(el("span", "time u-mono", p.time));
+    if (p.edited) head.appendChild(el("span", "time u-mono", "(edited)"));
     body.appendChild(head);
 
     if (p.debateId) {
@@ -2103,7 +2137,46 @@
     });
     actions.appendChild(repostBtn);
 
+    if (canModifyPost(p)) {
+      var editBtn = el("button", "", '<span class="glyph">✎</span><span>edit</span>');
+      editBtn.type = "button";
+      editBtn.addEventListener("click", function () {
+        state.editingPost[p.id] = !state.editingPost[p.id];
+        render();
+      });
+      actions.appendChild(editBtn);
+
+      var deleteBtn = el("button", "", '<span class="glyph">🗑</span><span>delete</span>');
+      deleteBtn.type = "button";
+      deleteBtn.addEventListener("click", function () { deletePostAction(p); });
+      actions.appendChild(deleteBtn);
+    }
+
     body.appendChild(actions);
+
+    if (state.editingPost[p.id]) {
+      var editBox = el("div", "reply-box");
+      var editTa = document.createElement("textarea");
+      editTa.value = p.text;
+      editTa.rows = 2;
+      editBox.appendChild(editTa);
+      var saveBtn = el("button", "", "Save");
+      saveBtn.type = "button";
+      saveBtn.addEventListener("click", function () {
+        var newText = editTa.value.trim();
+        if (!newText) return;
+        editPostAction(p, newText);
+      });
+      editBox.appendChild(saveBtn);
+      var cancelBtn = el("button", "", "Cancel");
+      cancelBtn.type = "button";
+      cancelBtn.addEventListener("click", function () {
+        state.editingPost[p.id] = false;
+        render();
+      });
+      editBox.appendChild(cancelBtn);
+      body.appendChild(editBox);
+    }
 
     if (state.openReply[p.id]) {
       var box = el("div", "reply-box");
@@ -3704,9 +3777,21 @@
     }
   });
 
+  var guestPostToken = "g" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+  function applyGuestIdentity() {
+    voices.you.name = "Guest";
+    voices.you.handle = "@guest";
+    document.getElementById("you-name").textContent = voices.you.name;
+    document.getElementById("you-handle").textContent = voices.you.handle;
+    document.getElementById("you-mark").textContent = "?";
+  }
+
   checkAuth().then(function (user) {
     if (user) {
       applyLoggedInUser(user);
+    } else {
+      applyGuestIdentity();
     }
     updateMeTabForAuthState();
     bootstrapApp();
