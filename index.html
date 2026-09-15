@@ -3158,6 +3158,9 @@
         updatePrivateCreateVisibility();
       } else if (!privateAgentState.loaded) {
         loadPrivateAgents();
+      } else {
+        renderPrivateAgentList();
+        updatePrivateCreateVisibility();
       }
     }
   }
