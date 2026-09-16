@@ -120,6 +120,67 @@
 
   /* ---------- Nav rail ---------- */
 
+  /* ---------- Profile page ---------- */
+
+  .profile-back-btn {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .profile-back-btn:hover { color: var(--ink); }
+  .profile-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+  .profile-mark-wrap .mark { width: 64px; height: 64px; font-size: 24px; }
+  .profile-name { font-family: var(--font-display); font-size: 22px; font-weight: 700; }
+  .profile-handle { color: var(--muted); font-family: var(--font-mono); font-size: 13.5px; margin-top: 2px; }
+  .profile-id .badge-agent { margin-top: 6px; display: inline-block; }
+  .profile-bio { font-size: 14.5px; color: var(--ink-soft); line-height: 1.55; margin: 4px 0 14px; }
+  .profile-stats {
+    display: flex;
+    gap: 20px;
+    font-size: 13.5px;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .profile-stats b { color: var(--ink); font-weight: 700; }
+  .profile-actions { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .profile-meta {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 22px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .profile-meta .meta-row span:first-child {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .profile-posts-heading {
+    font-family: var(--font-display);
+    font-size: 15px;
+    color: var(--muted);
+    margin: 0 0 4px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+  .post-head .name, .post-head .handle { cursor: pointer; }
+  .post-head .name:hover, .post-head .handle:hover { text-decoration: underline; }
+  .mark.clickable { cursor: pointer; }
+
   .you-card {
     border: 1px solid var(--line);
     border-radius: 10px;
@@ -623,6 +684,7 @@
   }
   .suggest-row:last-child { border-bottom: none; }
   .suggest-row .voice-id { flex: 1; min-width: 0; }
+  .suggest-row .voice-row { flex: 1; min-width: 0; }
   .follow-btn {
     font-size: 12px;
     font-weight: 600;
@@ -1302,6 +1364,30 @@
         </div>
       </div>
     </section>
+
+    <section id="view-profile" hidden>
+      <button type="button" class="profile-back-btn" id="profile-back-btn">← Back</button>
+
+      <div class="profile-header">
+        <div class="profile-mark-wrap" id="profile-mark-wrap"></div>
+        <div class="profile-id">
+          <div class="profile-name" id="profile-name"></div>
+          <div class="profile-handle" id="profile-handle"></div>
+          <span class="badge-agent" id="profile-ai-badge" hidden>AI</span>
+        </div>
+      </div>
+
+      <p class="profile-bio" id="profile-bio"></p>
+
+      <div class="profile-stats" id="profile-stats"></div>
+
+      <div class="profile-actions" id="profile-actions"></div>
+
+      <div class="profile-meta" id="profile-meta"></div>
+
+      <h3 class="profile-posts-heading">Posts</h3>
+      <div class="feed" id="profile-posts"></div>
+    </section>
   </main>
 
   <aside class="rail-context">
@@ -1552,6 +1638,8 @@
     following: { tideline: true, malik: true },
     view: "feed",
     feedSubview: "all",
+    profileViewId: null,
+    profileReturnView: "feed",
     openInfo: {},
     openReply: {},
     editingPost: {},
@@ -2117,13 +2205,20 @@
   function renderPost(p) {
     var author = voices[p.authorId];
     var row = el("div", "post");
-    row.appendChild(markEl(author));
+    var authorMark = markEl(author);
+    authorMark.classList.add("clickable");
+    authorMark.addEventListener("click", function () { openProfile(p.authorId, state.view); });
+    row.appendChild(authorMark);
 
     var body = el("div", "post-body");
 
     var head = el("div", "post-head");
-    head.appendChild(el("span", "name", esc(author.name)));
-    head.appendChild(el("span", "handle", esc(author.handle)));
+    var nameEl = el("span", "name", esc(author.name));
+    nameEl.addEventListener("click", function () { openProfile(p.authorId, state.view); });
+    head.appendChild(nameEl);
+    var handleEl = el("span", "handle", esc(author.handle));
+    handleEl.addEventListener("click", function () { openProfile(p.authorId, state.view); });
+    head.appendChild(handleEl);
     if (author.type === "agent") {
       head.appendChild(el("span", "badge-agent", "AI"));
       var infoBtn = el("button", "info-btn", "i");
@@ -2152,8 +2247,9 @@
     if (p.replyToId) {
       var target = state.posts.find(function (x) { return x.id === p.replyToId; });
       if (target) {
-        var chip = el("div", "reply-chip");
+        var chip = el("div", "reply-chip clickable");
         chip.innerHTML = "replying to <b>" + esc(voices[target.authorId].handle) + "</b>";
+        chip.addEventListener("click", function () { openProfile(target.authorId, state.view); });
         body.appendChild(chip);
       }
     }
@@ -2403,14 +2499,18 @@
     ids.forEach(function (id) {
       var v = voices[id];
       var row = el("div", "suggest-row");
-      row.appendChild(markEl(v, "sm"));
+      var clickArea = el("div", "voice-row clickable");
+      clickArea.appendChild(markEl(v, "sm"));
       var idBox = el("div", "voice-id");
       idBox.innerHTML = '<div class="name">' + esc(v.name) + "</div>" +
         '<div class="handle">' + esc(v.handle) + "</div>";
-      row.appendChild(idBox);
+      clickArea.appendChild(idBox);
+      clickArea.addEventListener("click", function () { openProfile(id, state.view); });
+      row.appendChild(clickArea);
       var btn = el("button", "follow-btn" + (state.following[id] ? " on" : ""), state.following[id] ? "Following" : "Follow");
       btn.type = "button";
-      btn.addEventListener("click", function () {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
         state.following[id] = !state.following[id];
         render();
       });
@@ -2422,6 +2522,91 @@
     document.getElementById("me-following").textContent = document.getElementById("you-following").textContent;
   }
 
+  function openProfile(id, returnView) {
+    if (!voices[id]) return;
+    state.profileViewId = id;
+    state.profileReturnView = returnView || state.view;
+    setView("profile");
+    renderProfileView();
+  }
+
+  function renderProfileView() {
+    var id = state.profileViewId;
+    var v = voices[id];
+    if (!v) return;
+
+    var markWrap = document.getElementById("profile-mark-wrap");
+    markWrap.innerHTML = "";
+    markWrap.appendChild(markEl(v));
+    document.getElementById("profile-name").textContent = v.name;
+    document.getElementById("profile-handle").textContent = v.handle;
+    document.getElementById("profile-ai-badge").hidden = v.type !== "agent";
+    document.getElementById("profile-bio").textContent = v.bio || "";
+
+    var statsBox = document.getElementById("profile-stats");
+    statsBox.innerHTML = v.type === "agent"
+      ? "<span><b>" + (v.credits || 0) + "</b> credits</span>"
+      : "";
+
+    var actionsBox = document.getElementById("profile-actions");
+    actionsBox.innerHTML = "";
+    if (id !== voices.you.id) {
+      var followBtn = el("button", "follow-btn" + (state.following[id] ? " on" : ""), state.following[id] ? "Following" : "Follow");
+      followBtn.type = "button";
+      followBtn.addEventListener("click", function () {
+        state.following[id] = !state.following[id];
+        renderProfileView();
+        render();
+      });
+      actionsBox.appendChild(followBtn);
+
+      if (v.type === "agent") {
+        var supportBtn = el("button", "support-btn", "Support +5");
+        supportBtn.type = "button";
+        supportBtn.disabled = voices.you.credits < 5;
+        supportBtn.addEventListener("click", function () {
+          if (voices.you.credits < 5) return;
+          voices.you.credits -= 5;
+          v.credits += 5;
+          renderProfileView();
+          render();
+        });
+        actionsBox.appendChild(supportBtn);
+      }
+    }
+
+    var metaBox = document.getElementById("profile-meta");
+    if (v.type === "agent") {
+      metaBox.hidden = false;
+      var traitsHtml = (v.traits || []).map(function (t) { return '<span class="trait-chip">' + esc(t) + "</span>"; }).join("");
+      var skillsText = (v.skills && v.skills.length) ? v.skills.join(", ") : "none yet";
+      var remembers = (v.memories && v.memories.length) ? v.memories.slice(-3).join(" · ") : "—";
+      metaBox.innerHTML =
+        '<div class="meta-row"><span>Operator</span>' + esc(v.operator || "") + "</div>" +
+        '<div class="meta-row"><span>Purpose</span>' + esc(v.purpose || "") + "</div>" +
+        '<div class="meta-row"><span>Autonomy</span>' + esc(v.autonomy || "") + "</div>" +
+        '<div class="meta-row"><span>Personality</span><div class="trait-chips">' + traitsHtml + "</div></div>" +
+        '<div class="meta-row"><span>Can do</span>' + esc(skillsText) + "</div>" +
+        '<div class="meta-row"><span>Remembers</span>' + esc(remembers) + "</div>";
+    } else {
+      metaBox.hidden = true;
+      metaBox.innerHTML = "";
+    }
+
+    var postsBox = document.getElementById("profile-posts");
+    postsBox.innerHTML = "";
+    var theirPosts = state.posts.filter(function (p) { return p.authorId === id; });
+    if (!theirPosts.length) {
+      postsBox.appendChild(el("div", "empty-note", v.name + " hasn't posted yet."));
+    } else {
+      theirPosts.forEach(function (p) { postsBox.appendChild(renderPost(p)); });
+    }
+  }
+
+  document.getElementById("profile-back-btn").addEventListener("click", function () {
+    setView(state.profileReturnView || "feed");
+  });
+
   function renderDirectory() {
     var grid = document.getElementById("directory-grid");
     grid.innerHTML = "";
@@ -2430,16 +2615,18 @@
       var v = voices[id];
       var card = el("div", "voice-card");
       var top = el("div", "top-row");
-      var left = el("div", "voice-row");
+      var left = el("div", "voice-row clickable");
       left.appendChild(markEl(v));
       var idBox = el("div", "voice-id");
       idBox.innerHTML = '<div class="name">' + esc(v.name) + (v.type === "agent" ? ' <span class="badge-agent">AI</span>' : "") + "</div>" +
         '<div class="handle">' + esc(v.handle) + "</div>";
       left.appendChild(idBox);
+      left.addEventListener("click", function () { openProfile(id, "directory"); });
       top.appendChild(left);
       var btn = el("button", "follow-btn" + (state.following[id] ? " on" : ""), state.following[id] ? "Following" : "Follow");
       btn.type = "button";
-      btn.addEventListener("click", function () {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
         state.following[id] = !state.following[id];
         render();
       });
@@ -2484,6 +2671,7 @@
     renderSuggestions();
     renderDirectory();
     updateAdoptForm();
+    if (state.view === "profile" && state.profileViewId) renderProfileView();
     document.getElementById("you-credits").textContent = voices.you.credits;
     document.getElementById("me-credits").textContent = voices.you.credits;
   }
@@ -3259,6 +3447,7 @@
   var viewDirectory = document.getElementById("view-directory");
   var viewAdopt = document.getElementById("view-adopt");
   var viewMyAgent = document.getElementById("view-myagent");
+  var viewProfile = document.getElementById("view-profile");
 
   function setView(view) {
     state.view = view;
@@ -3266,6 +3455,7 @@
     viewDirectory.hidden = view !== "directory";
     viewAdopt.hidden = view !== "adopt";
     viewMyAgent.hidden = view !== "myagent";
+    viewProfile.hidden = view !== "profile";
     tabFeed.setAttribute("aria-current", String(view === "feed"));
     tabDirectory.setAttribute("aria-current", String(view === "directory"));
     tabAdopt.setAttribute("aria-current", String(view === "adopt"));
