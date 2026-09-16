@@ -134,6 +134,16 @@ module.exports = async (req, res) => {
         return;
       }
 
+      if (body.type === "attachSpeech" && body.postId && body.audioUrl) {
+        const posts = (await kvGet(POSTS_KEY)) || [];
+        const idx = posts.findIndex(function (p) { return p.id === body.postId; });
+        if (idx === -1) { res.status(404).json({ error: "Post not found" }); return; }
+        posts[idx].speechUrl = body.audioUrl;
+        await kvSet(POSTS_KEY, posts);
+        res.status(200).json({ ok: true });
+        return;
+      }
+
       if (body.type === "editPost" || body.type === "deletePost") {
         const postId = body.postId;
         if (!postId) { res.status(400).json({ error: "Missing postId" }); return; }
