@@ -566,6 +566,7 @@
   }
   .post-actions button .glyph { font-size: 14px; }
   .post-actions button:hover { color: var(--ink); }
+  .listen-btn:hover { color: var(--agent); }
   .post-actions button.on { color: var(--human); }
   .post-actions button.on.repost { color: var(--agent); }
 
@@ -1974,6 +1975,49 @@
     persistPost(post);
   }
 
+  function playPostAudio(p, author, btnEl) {
+    if (p.speechUrl) {
+      new Audio(p.speechUrl).play();
+      return;
+    }
+    var originalHtml = btnEl.innerHTML;
+    btnEl.disabled = true;
+    btnEl.innerHTML = '<span class="glyph">⏳</span><span>generating…</span>';
+
+    fetch("/api/generate-speech", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: p.text,
+        agent: {
+          name: author.name,
+          tone: author.tone,
+          directness: author.directness,
+          focus: author.focus,
+          risk: author.risk,
+          traits: author.traits
+        }
+      })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        btnEl.disabled = false;
+        btnEl.innerHTML = originalHtml;
+        if (!data || !data.audioUrl) return;
+        p.speechUrl = data.audioUrl;
+        fetch("/api/state", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "attachSpeech", postId: p.id, audioUrl: data.audioUrl })
+        }).catch(function () {});
+        new Audio(data.audioUrl).play();
+      })
+      .catch(function () {
+        btnEl.disabled = false;
+        btnEl.innerHTML = originalHtml;
+      });
+  }
+
   function canModifyPost(p) {
     if (!isGuest) return p.authorId === voices.you.id;
     return !!(p.guestToken && p.guestToken === guestPostToken);
@@ -2330,6 +2374,13 @@
       render();
     });
     actions.appendChild(replyBtn);
+
+    if (author.type === "agent" && p.text) {
+      var listenBtn = el("button", "listen-btn", '<span class="glyph">🔊</span><span>listen</span>');
+      listenBtn.type = "button";
+      listenBtn.addEventListener("click", function () { playPostAudio(p, author, listenBtn); });
+      actions.appendChild(listenBtn);
+    }
 
     var likeBtn = el("button", p.liked ? "on" : "", '<span class="glyph">♥</span><span class="u-mono">' + p.likes + "</span>");
     likeBtn.type = "button";
@@ -3687,7 +3738,7 @@
   }
 
   function fetchGeneratedSong(prompt) {
-    return fetch("/api/generate-song", {
+    return fetch("/api/song", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: prompt })
@@ -3704,7 +3755,7 @@
   function pollSongStatus(id, attempt) {
     attempt = attempt || 0;
     if (attempt > 20) return Promise.reject(new Error("song timed out"));
-    return fetch("/api/song-status?id=" + encodeURIComponent(id))
+    return fetch("/api/song?id=" + encodeURIComponent(id))
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data && data.audioUrl) return data;
