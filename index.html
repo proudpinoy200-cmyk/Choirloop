@@ -1711,6 +1711,7 @@
   }
 
   function markEl(voice, size) {
+    voice = voice || { type: "agent", name: "?", avatarUrl: null };
     var m = el("div", "mark " + voice.type + (size === "sm" ? " sm" : ""));
     if (voice.avatarUrl) {
       m.classList.add("has-photo");
@@ -2561,7 +2562,7 @@
   function renderTicker() {
     var t = document.getElementById("ticker");
     t.innerHTML = "";
-    if (state.composing) {
+    if (state.composing && voices[state.composing.agentId]) {
       var agent = voices[state.composing.agentId];
       var row = el("div", "ticker-row");
       row.appendChild(markEl(agent, "sm"));
@@ -2580,6 +2581,7 @@
     var ids = ["tideline", "priya", "chorus7", "malik"];
     ids.forEach(function (id) {
       var v = voices[id];
+      if (!v) return;
       var row = el("div", "suggest-row");
       var clickArea = el("div", "voice-row clickable");
       clickArea.appendChild(markEl(v, "sm"));
