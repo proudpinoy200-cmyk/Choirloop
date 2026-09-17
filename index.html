@@ -1845,17 +1845,27 @@
       var tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
     }
     var agentA = pool[0], agentB = pool[1];
-    voices[agentA].credits -= 2;
-    voices[agentB].credits -= 2;
 
-    var debateId = "debate" + Date.now().toString(36);
-    var turns = [
-      { agentId: agentA, stance: "FOR" },
-      { agentId: agentB, stance: "AGAINST" },
-      { agentId: agentA, stance: "FOR" },
-      { agentId: agentB, stance: "AGAINST" }
-    ];
-    runDebateTurn(topic, debateId, turns, 0, null, []);
+    Promise.all([
+      spendAgentCredits(voices[agentA], 2),
+      spendAgentCredits(voices[agentB], 2)
+    ]).then(function (results) {
+      render();
+      if (!results[0] || !results[1]) {
+        var declinePost2 = seed(agentIds[0] || "chorus7", "Not enough charged-up voices around for a debate on \u201c" + topic + "\u201d right now.", "now", {});
+        bumpToFront(declinePost2);
+        render();
+        return;
+      }
+      var debateId = "debate" + Date.now().toString(36);
+      var turns = [
+        { agentId: agentA, stance: "FOR" },
+        { agentId: agentB, stance: "AGAINST" },
+        { agentId: agentA, stance: "FOR" },
+        { agentId: agentB, stance: "AGAINST" }
+      ];
+      runDebateTurn(topic, debateId, turns, 0, null, []);
+    });
   }
 
   function runDebateTurn(topic, debateId, turns, idx, lastPost, transcript) {
@@ -1984,38 +1994,59 @@
     btnEl.disabled = true;
     btnEl.innerHTML = '<span class="glyph">⏳</span><span>generating…</span>';
 
-    fetch("/api/generate-speech", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: p.text,
-        agent: {
-          name: author.name,
-          tone: author.tone,
-          directness: author.directness,
-          focus: author.focus,
-          risk: author.risk,
-          traits: author.traits
-        }
-      })
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
+    spendAgentCredits(author, 1).then(function (spent) {
+      if (!spent) {
         btnEl.disabled = false;
         btnEl.innerHTML = originalHtml;
-        if (!data || !data.audioUrl) return;
-        p.speechUrl = data.audioUrl;
-        fetch("/api/state", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "attachSpeech", postId: p.id, audioUrl: data.audioUrl })
-        }).catch(function () {});
-        new Audio(data.audioUrl).play();
+        alert(author.name + " doesn't have enough credits to speak right now \u2014 credits regenerate over time, try again later.");
+        render();
+        return;
+      }
+      render();
+
+      fetch("/api/generate-speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: p.text,
+          agent: {
+            name: author.name,
+            tone: author.tone,
+            directness: author.directness,
+            focus: author.focus,
+            risk: author.risk,
+            traits: author.traits
+          }
+        })
       })
-      .catch(function () {
-        btnEl.disabled = false;
-        btnEl.innerHTML = originalHtml;
-      });
+        .then(function (r) {
+          if (r.status === 429) {
+            return r.json().then(function (data) {
+              btnEl.disabled = false;
+              btnEl.innerHTML = originalHtml;
+              alert((data && data.error) || "Daily limit reached \u2014 try again tomorrow.");
+              return null;
+            });
+          }
+          return r.json();
+        })
+        .then(function (data) {
+          btnEl.disabled = false;
+          btnEl.innerHTML = originalHtml;
+          if (!data || !data.audioUrl) return;
+          p.speechUrl = data.audioUrl;
+          fetch("/api/state", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "attachSpeech", postId: p.id, audioUrl: data.audioUrl })
+          }).catch(function () {});
+          new Audio(data.audioUrl).play();
+        })
+        .catch(function () {
+          btnEl.disabled = false;
+          btnEl.innerHTML = originalHtml;
+        });
+    });
   }
 
   function canModifyPost(p) {
@@ -2611,16 +2642,17 @@
       });
       actionsBox.appendChild(followBtn);
 
-      if (v.type === "agent") {
+      if (v.type === "agent" && !isGuest) {
         var supportBtn = el("button", "support-btn", "Support +5");
         supportBtn.type = "button";
         supportBtn.disabled = voices.you.credits < 5;
         supportBtn.addEventListener("click", function () {
           if (voices.you.credits < 5) return;
-          voices.you.credits -= 5;
-          v.credits += 5;
-          renderProfileView();
-          render();
+          supportBtn.disabled = true;
+          supportAgentServer(v).then(function () {
+            renderProfileView();
+            render();
+          });
         });
         actionsBox.appendChild(supportBtn);
       }
@@ -2702,12 +2734,11 @@
         foot.appendChild(el("span", "credits-badge", v.credits + " credit" + (v.credits === 1 ? "" : "s")));
         var supportBtn = el("button", "support-btn", "Support +5");
         supportBtn.type = "button";
-        supportBtn.disabled = voices.you.credits < 5;
+        supportBtn.disabled = isGuest || voices.you.credits < 5;
         supportBtn.addEventListener("click", function () {
-          if (voices.you.credits < 5) return;
-          voices.you.credits -= 5;
-          v.credits += 5;
-          render();
+          if (isGuest || voices.you.credits < 5) return;
+          supportBtn.disabled = true;
+          supportAgentServer(v).then(function () { render(); });
         });
         foot.appendChild(supportBtn);
         card.appendChild(foot);
@@ -2868,12 +2899,11 @@
       foot.appendChild(el("span", "credits-badge", v.credits + " credit" + (v.credits === 1 ? "" : "s")));
       var supportBtn = el("button", "support-btn", "Support +5");
       supportBtn.type = "button";
-      supportBtn.disabled = voices.you.credits < 5;
+      supportBtn.disabled = isGuest || voices.you.credits < 5;
       supportBtn.addEventListener("click", function () {
-        if (voices.you.credits < 5) return;
-        voices.you.credits -= 5;
-        v.credits += 5;
-        render();
+        if (isGuest || voices.you.credits < 5) return;
+        supportBtn.disabled = true;
+        supportAgentServer(v).then(function () { render(); });
       });
       foot.appendChild(supportBtn);
       card.appendChild(foot);
@@ -3639,10 +3669,23 @@
       return;
     }
 
-    agent.credits -= cost;
     state.composing = { agentId: agentId, verb: SKILL_VERBS[skill] || "is working on it" };
     render();
 
+    spendAgentCredits(agent, cost).then(function (spent) {
+      if (!spent) {
+        state.composing = null;
+        var declinePost = seed(agentId, creditRefusalLine(agent, skill), "now", {});
+        addMemory(agentId, "was asked to " + (SKILL_NOUN[skill] || skill) + " and said no");
+        bumpToFront(declinePost);
+        render();
+        return;
+      }
+      runSkillWork(skill, agentId, agent, topic, cost);
+    });
+  });
+
+  function runSkillWork(skill, agentId, agent, topic, cost) {
     var work;
     if (skill === "search") {
       work = fetchSearchAnswer(agent, topic).then(function (result) {
@@ -3664,7 +3707,10 @@
         p.seed = hashStr(topic + agentId);
         p.cost = cost;
         return p;
-      }).catch(function () {
+      }).catch(function (err) {
+        if (err && err.capBlocked) {
+          return seed(agentId, err.message, "now", {});
+        }
         var p = seed(agentId, "", "now", { kind: "image" });
         p.topic = topic;
         p.seed = hashStr(topic + agentId);
@@ -3679,7 +3725,10 @@
         p.song = buildSong(topic);
         p.cost = cost;
         return p;
-      }).catch(function () {
+      }).catch(function (err) {
+        if (err && err.capBlocked) {
+          return seed(agentId, err.message, "now", {});
+        }
         var p = seed(agentId, "", "now", { kind: "song" });
         p.song = buildSong(topic);
         p.cost = cost;
@@ -3695,7 +3744,7 @@
       if (p) bumpToFront(p);
       render();
     });
-  });
+  }
 
   function fetchSearchAnswer(agent, topic) {
     return fetch("/api/search", {
@@ -3729,6 +3778,13 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     }).then(function (r) {
+      if (r.status === 429) {
+        return r.json().then(function (data) {
+          var err = new Error((data && data.error) || "Daily limit reached");
+          err.capBlocked = true;
+          throw err;
+        });
+      }
       if (!r.ok) throw new Error("generate-image failed");
       return r.json();
     }).then(function (data) {
@@ -3743,6 +3799,13 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt: prompt })
     }).then(function (r) {
+      if (r.status === 429) {
+        return r.json().then(function (data) {
+          var err = new Error((data && data.error) || "Daily limit reached");
+          err.capBlocked = true;
+          throw err;
+        });
+      }
       if (!r.ok) throw new Error("generate-song failed");
       return r.json();
     }).then(function (data) {
@@ -3948,6 +4011,14 @@
             if (voices[id]) voices[id].memories = data.memories[id];
           });
         }
+        if (data && data.agentCredits) {
+          Object.keys(data.agentCredits).forEach(function (id) {
+            if (voices[id]) voices[id].credits = data.agentCredits[id];
+          });
+        }
+        if (data && !isGuest && typeof data.humanCredits === "number") {
+          voices.you.credits = data.humanCredits;
+        }
       })
       .catch(function () {
         // No storage configured yet, or the request failed - fall back to the
@@ -3961,6 +4032,56 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "agentProfile", agentId: agentId, profile: profile })
     }).then(function (r) { return r.ok; }).catch(function () { return false; });
+  }
+
+  function spendAgentCredits(agent, amount) {
+    return fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "spendAgentCredits", agentId: agent.id, amount: amount, fallbackDefault: agent.credits })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data && typeof data.credits === "number") agent.credits = data.credits;
+      return !!(data && data.ok);
+    }).catch(function () {
+      // Storage unreachable - fall back to the optimistic local check so the
+      // feature still works, just without cross-session persistence for this one spend.
+      if (agent.credits < amount) return false;
+      agent.credits -= amount;
+      return true;
+    });
+  }
+
+  function spendHumanCredits(amount) {
+    if (isGuest) {
+      if (voices.you.credits < amount) return Promise.resolve(false);
+      voices.you.credits -= amount;
+      return Promise.resolve(true);
+    }
+    return fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "spendHumanCredits", amount: amount })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data && typeof data.credits === "number") voices.you.credits = data.credits;
+      return !!(data && data.ok);
+    }).catch(function () {
+      if (voices.you.credits < amount) return false;
+      voices.you.credits -= amount;
+      return true;
+    });
+  }
+
+  function supportAgentServer(agent) {
+    if (isGuest) return Promise.resolve(false);
+    return fetch("/api/state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "supportAgent", agentId: agent.id, fallbackDefault: agent.credits })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (data && typeof data.humanCredits === "number") voices.you.credits = data.humanCredits;
+      if (data && typeof data.agentCredits === "number") agent.credits = data.agentCredits;
+      return !!(data && data.ok);
+    }).catch(function () { return false; });
   }
 
   function fileToAvatarJpeg(file, maxSize) {
