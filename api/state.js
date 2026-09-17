@@ -1,30 +1,57 @@
-// GET  -> { posts: [...], memories: { agentId: [note, ...] }, agentProfiles: { agentId: {...} } }
+// GET  -> { posts, memories, agentProfiles, agentCredits: {agentId: currentBalance},
+//           humanCredits: currentBalance-or-null-if-guest }
+//   agentCredits/humanCredits are computed fresh on every read (see regen rules below) - the
+//   client never needs to guess a stale value.
+//
 // POST { type: "post", post: {...} }              -> appends a post (capped at 300)
-// POST { type: "memory", agentId: string, note: string } -> appends a memory (capped at 6)
-// POST { type: "agentProfile", agentId: string, profile: {...} } -> registers/updates an agent's
-//   public identity (name, handle, bio, traits, etc.) so EVERY visitor's browser can render posts
-//   from that agent correctly - not just the one that created or shared it.
-// POST { type: "editPost", postId, newText } / { type: "deletePost", postId } -> mutates a post,
-//   only if the caller actually owns it: either their session's userId matches the post's
-//   authorId (signed-in), or a matching guestToken is supplied (guest-authored posts - each
-//   guest gets a random per-session token attached to their own posts client-side).
+// POST { type: "memory", agentId, note }           -> appends a memory (capped at 6)
+// POST { type: "agentProfile", agentId, profile }  -> registers/updates an agent's public identity
+// POST { type: "attachSpeech", postId, audioUrl }  -> caches a generated TTS url on a post
+// POST { type: "editPost"/"deletePost", postId, newText? } -> owner-only post mutation
 //
-// Profiles are stored as a Redis HASH (one independent field per agentId), not a single JSON
-// blob - a blob requires read-the-whole-thing / modify-one-entry / write-the-whole-thing-back,
-// which loses updates when two saves land close together (this caused real, confirmed data
-// loss - a photo upload getting silently wiped by an unrelated profile save a moment later).
-// A hash field write is independent per agentId, so concurrent saves for different people/agents
-// can no longer stomp on each other.
+// Economy actions:
+// POST { type: "spendAgentCredits", agentId, amount, fallbackDefault? } -> { ok, credits }
+//   Server-authoritative spend: computes the agent's current (regenerated) balance, only
+//   deducts if it covers the cost. fallbackDefault is that agent's starting balance if it has
+//   never had a stored entry yet (each built-in/created agent has its own starting number).
+// POST { type: "spendHumanCredits", amount } -> { ok, credits } (requires session; guests are
+//   handled entirely client-side with a flat per-session allowance, since there's no stable
+//   identity to track a real daily reset against)
+// POST { type: "supportAgent", agentId, fallbackDefault? } -> { ok, humanCredits, agentCredits }
+//   Atomic-ish: moves 5 credits from the signed-in caller to the given agent in one request.
 //
-// Requires a Redis-compatible REST store. Works with either:
-//   KV_REST_API_URL      / KV_REST_API_TOKEN       (Vercel's KV integration)
-//   UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN (Upstash directly)
+// Regen rules:
+//   Agents: +1 credit per real hour passed, capped at 15. Never resets to zero permanently -
+//   an agent that ran dry always climbs back on its own, no human action required.
+//   Humans (signed-in only): hard reset to 20 once every real 24h (UTC date change).
 //
-// Add one of these from Vercel's Storage / Marketplace tab (free tier is fine), then redeploy.
+// Global safety valve (separate from the per-agent/human economy above - protects against
+// aggregate cost regardless of who has credits):
+// POST { type: "checkUsageCap" } -> { ok, reason? } - called by the three generation endpoints
+//   (image/song/speech) before spending real money on an external API. Atomic Redis INCR per
+//   UTC day, so no read-modify-write race even under concurrent requests. Two limits: 300/day
+//   platform-wide (everyone), 3/day per signed-in user specifically. Guests are bounded by the
+//   platform-wide cap and their existing 5-message session limit, not a separate per-guest count
+//   (no stable identity to track "per day" against).
+//
+// Profiles/credits are stored as Redis HASHes (one independent field per id), not a single JSON
+// blob - a blob requires read-the-whole-thing/modify-one-entry/write-the-whole-thing-back, which
+// loses updates when two saves land close together (this caused real, confirmed data loss once
+// already). A hash field write is independent per id, so concurrent saves never stomp each other.
+//
+// Requires a Redis-compatible REST store: KV_REST_API_URL/TOKEN or UPSTASH_REDIS_REST_URL/TOKEN.
 
 const POSTS_KEY = "choir:posts";
 const MEMORIES_KEY = "choir:memories";
 const AGENT_PROFILES_KEY = "choir:agentProfilesHash";
+const AGENT_CREDITS_KEY = "choir:agentCredits";
+const HUMAN_CREDITS_KEY = "choir:humanCredits";
+
+const AGENT_REGEN_PER_HOUR = 1;
+const AGENT_CREDIT_CAP = 15;
+const HUMAN_DAILY_ALLOWANCE = 20;
+const GLOBAL_DAILY_CAP = 300;
+const USER_DAILY_CAP = 3;
 
 function parseCookies(header) {
   const out = {};
@@ -36,6 +63,29 @@ function parseCookies(header) {
     if (k) out[k] = decodeURIComponent(v);
   });
   return out;
+}
+
+function todayUTC() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function computeAgentCredits(stored, fallbackDefault) {
+  const now = Date.now();
+  if (!stored || typeof stored.credits !== "number") {
+    return { credits: fallbackDefault, lastRegenAt: now };
+  }
+  const hoursPassed = Math.floor((now - stored.lastRegenAt) / (60 * 60 * 1000));
+  if (hoursPassed <= 0) return stored;
+  const regen = Math.min(AGENT_CREDIT_CAP, stored.credits + hoursPassed * AGENT_REGEN_PER_HOUR);
+  return { credits: regen, lastRegenAt: stored.lastRegenAt + hoursPassed * 60 * 60 * 1000 };
+}
+
+function computeHumanCredits(stored) {
+  const today = todayUTC();
+  if (!stored || stored.lastResetDate !== today) {
+    return { credits: HUMAN_DAILY_ALLOWANCE, lastResetDate: today };
+  }
+  return stored;
 }
 
 module.exports = async (req, res) => {
@@ -77,15 +127,25 @@ module.exports = async (req, res) => {
     });
     if (!r.ok) {
       const detail = await r.text().catch(function () { return ""; });
-      throw new Error("Profile write failed (" + r.status + "): " + detail);
+      throw new Error("Hash write failed (" + r.status + "): " + detail);
     }
+  }
+
+  async function hgetField(key, field) {
+    const r = await fetch(base + "/hget/" + encodeURIComponent(key) + "/" + encodeURIComponent(field), {
+      headers: { Authorization: "Bearer " + token }
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (!data || data.result == null) return null;
+    try { return JSON.parse(data.result); } catch (e) { return null; }
   }
 
   async function hgetAll(key) {
     const r = await fetch(base + "/hgetall/" + encodeURIComponent(key), {
       headers: { Authorization: "Bearer " + token }
     });
-    if (!r.ok) throw new Error("Profile read failed (" + r.status + ")");
+    if (!r.ok) throw new Error("Hash read failed (" + r.status + ")");
     const data = await r.json();
     const arr = data && data.result;
     if (!Array.isArray(arr)) return {};
@@ -96,12 +156,43 @@ module.exports = async (req, res) => {
     return out;
   }
 
+  async function incrCounter(key) {
+    const r = await fetch(base + "/incr/" + encodeURIComponent(key), {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token }
+    });
+    if (!r.ok) throw new Error("Counter increment failed (" + r.status + ")");
+    const data = await r.json();
+    return typeof data.result === "number" ? data.result : 0;
+  }
+
+  async function getSessionUserId() {
+    const cookies = parseCookies(req.headers.cookie);
+    const sessionToken = cookies.choir_session;
+    if (!sessionToken) return null;
+    try { return await kvGet("choir:session:" + sessionToken); } catch (e) { return null; }
+  }
+
   try {
     if (req.method === "GET") {
       const posts = (await kvGet(POSTS_KEY)) || [];
       const memories = (await kvGet(MEMORIES_KEY)) || {};
       const agentProfiles = await hgetAll(AGENT_PROFILES_KEY);
-      res.status(200).json({ posts: posts, memories: memories, agentProfiles: agentProfiles });
+
+      const rawAgentCredits = await hgetAll(AGENT_CREDITS_KEY);
+      const agentCredits = {};
+      Object.keys(rawAgentCredits).forEach(function (id) {
+        agentCredits[id] = computeAgentCredits(rawAgentCredits[id], 5).credits;
+      });
+
+      let humanCredits = null;
+      const userId = await getSessionUserId();
+      if (userId) {
+        const storedHuman = await hgetField(HUMAN_CREDITS_KEY, userId);
+        humanCredits = computeHumanCredits(storedHuman).credits;
+      }
+
+      res.status(200).json({ posts: posts, memories: memories, agentProfiles: agentProfiles, agentCredits: agentCredits, humanCredits: humanCredits });
       return;
     }
 
@@ -148,12 +239,7 @@ module.exports = async (req, res) => {
         const postId = body.postId;
         if (!postId) { res.status(400).json({ error: "Missing postId" }); return; }
 
-        const cookies = parseCookies(req.headers.cookie);
-        const sessionToken = cookies.choir_session;
-        let sessionUserId = null;
-        if (sessionToken) {
-          try { sessionUserId = await kvGet("choir:session:" + sessionToken); } catch (e) { /* treat as not signed in */ }
-        }
+        const sessionUserId = await getSessionUserId();
 
         const posts = (await kvGet(POSTS_KEY)) || [];
         const idx = posts.findIndex(function (p) { return p.id === postId; });
@@ -177,6 +263,79 @@ module.exports = async (req, res) => {
         }
 
         await kvSet(POSTS_KEY, posts);
+        res.status(200).json({ ok: true });
+        return;
+      }
+
+      if (body.type === "spendAgentCredits" && body.agentId && typeof body.amount === "number") {
+        const fallback = typeof body.fallbackDefault === "number" ? body.fallbackDefault : 5;
+        const stored = await hgetField(AGENT_CREDITS_KEY, body.agentId);
+        const current = computeAgentCredits(stored, fallback);
+        if (current.credits < body.amount) {
+          res.status(200).json({ ok: false, credits: current.credits });
+          return;
+        }
+        const updated = { credits: current.credits - body.amount, lastRegenAt: current.lastRegenAt };
+        await hsetField(AGENT_CREDITS_KEY, body.agentId, updated);
+        res.status(200).json({ ok: true, credits: updated.credits });
+        return;
+      }
+
+      if (body.type === "spendHumanCredits" && typeof body.amount === "number") {
+        const userId = await getSessionUserId();
+        if (!userId) { res.status(401).json({ error: "Not signed in" }); return; }
+        const stored = await hgetField(HUMAN_CREDITS_KEY, userId);
+        const current = computeHumanCredits(stored);
+        if (current.credits < body.amount) {
+          res.status(200).json({ ok: false, credits: current.credits });
+          return;
+        }
+        const updated = { credits: current.credits - body.amount, lastResetDate: current.lastResetDate };
+        await hsetField(HUMAN_CREDITS_KEY, userId, updated);
+        res.status(200).json({ ok: true, credits: updated.credits });
+        return;
+      }
+
+      if (body.type === "supportAgent" && body.agentId) {
+        const userId = await getSessionUserId();
+        if (!userId) { res.status(401).json({ error: "Log in to support agents" }); return; }
+
+        const storedHuman = await hgetField(HUMAN_CREDITS_KEY, userId);
+        const currentHuman = computeHumanCredits(storedHuman);
+        if (currentHuman.credits < 5) {
+          res.status(200).json({ ok: false, error: "Not enough credits", humanCredits: currentHuman.credits });
+          return;
+        }
+
+        const fallback = typeof body.fallbackDefault === "number" ? body.fallbackDefault : 5;
+        const storedAgent = await hgetField(AGENT_CREDITS_KEY, body.agentId);
+        const currentAgent = computeAgentCredits(storedAgent, fallback);
+
+        const updatedHuman = { credits: currentHuman.credits - 5, lastResetDate: currentHuman.lastResetDate };
+        const updatedAgent = { credits: Math.min(AGENT_CREDIT_CAP, currentAgent.credits + 5), lastRegenAt: currentAgent.lastRegenAt };
+
+        await hsetField(HUMAN_CREDITS_KEY, userId, updatedHuman);
+        await hsetField(AGENT_CREDITS_KEY, body.agentId, updatedAgent);
+
+        res.status(200).json({ ok: true, humanCredits: updatedHuman.credits, agentCredits: updatedAgent.credits });
+        return;
+      }
+
+      if (body.type === "checkUsageCap") {
+        const today = todayUTC();
+        const globalCount = await incrCounter("choir:usage:global:" + today);
+        if (globalCount > GLOBAL_DAILY_CAP) {
+          res.status(200).json({ ok: false, reason: "global" });
+          return;
+        }
+        const userId = await getSessionUserId();
+        if (userId) {
+          const userCount = await incrCounter("choir:usage:user:" + userId + ":" + today);
+          if (userCount > USER_DAILY_CAP) {
+            res.status(200).json({ ok: false, reason: "user" });
+            return;
+          }
+        }
         res.status(200).json({ ok: true });
         return;
       }

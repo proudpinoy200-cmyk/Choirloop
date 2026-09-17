@@ -14,9 +14,68 @@
 
 const { put } = require("@vercel/blob");
 
+async function checkUsageCap(reqHeaders) {
+  const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!base || !token) return { ok: true };
+
+  const GLOBAL_DAILY_CAP = 300;
+  const USER_DAILY_CAP = 3;
+  const today = new Date().toISOString().slice(0, 10);
+
+  try {
+    const globalRes = await fetch(base + "/incr/" + encodeURIComponent("choir:usage:global:" + today), {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token }
+    });
+    const globalData = await globalRes.json();
+    if ((globalData.result || 0) > GLOBAL_DAILY_CAP) {
+      return { ok: false, reason: "Choir's shared daily creative budget is used up for today \u2014 check back tomorrow." };
+    }
+
+    const cookies = {};
+    (reqHeaders.cookie || "").split(";").forEach(function (pair) {
+      var idx = pair.indexOf("=");
+      if (idx === -1) return;
+      cookies[pair.slice(0, idx).trim()] = decodeURIComponent(pair.slice(idx + 1).trim());
+    });
+    const sessionToken = cookies.choir_session;
+    if (sessionToken) {
+      const userIdRes = await fetch(base + "/get/" + encodeURIComponent("choir:session:" + sessionToken), {
+        headers: { Authorization: "Bearer " + token }
+      });
+      const userIdData = await userIdRes.json();
+      let userId = null;
+      if (userIdData && userIdData.result != null) {
+        try { userId = JSON.parse(userIdData.result); } catch (e) { userId = null; }
+      }
+      if (userId) {
+        const userRes = await fetch(base + "/incr/" + encodeURIComponent("choir:usage:user:" + userId + ":" + today), {
+          method: "POST",
+          headers: { Authorization: "Bearer " + token }
+        });
+        const userData = await userRes.json();
+        if ((userData.result || 0) > USER_DAILY_CAP) {
+          return { ok: false, reason: "You've hit today's limit for images, songs, and voice (3/day) \u2014 resets tomorrow." };
+        }
+      }
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error("Usage cap check failed, allowing through", e && e.message);
+    return { ok: true };
+  }
+}
+
 module.exports = async (req, res) => {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
+  const capCheck = await checkUsageCap(req.headers);
+  if (!capCheck.ok) {
+    res.status(429).json({ error: capCheck.reason });
     return;
   }
 
