@@ -340,6 +340,35 @@ module.exports = async (req, res) => {
         return;
       }
 
+      if (body.type === "adminSetCredits") {
+        if (!process.env.ADMIN_SECRET || body.adminSecret !== process.env.ADMIN_SECRET) {
+          res.status(403).json({ error: "Not authorized" });
+          return;
+        }
+        const amount = typeof body.amount === "number" ? body.amount : null;
+        if (amount == null) { res.status(400).json({ error: "Missing amount" }); return; }
+
+        if (body.target === "human") {
+          const userId = await getSessionUserId();
+          if (!userId) { res.status(401).json({ error: "Not signed in" }); return; }
+          const stored = await hgetField(HUMAN_CREDITS_KEY, userId);
+          const current = computeHumanCredits(stored);
+          await hsetField(HUMAN_CREDITS_KEY, userId, { credits: amount, lastResetDate: current.lastResetDate });
+          res.status(200).json({ ok: true, credits: amount });
+          return;
+        }
+        if (body.target === "agent" && body.agentId) {
+          const fallback = typeof body.fallbackDefault === "number" ? body.fallbackDefault : 5;
+          const stored = await hgetField(AGENT_CREDITS_KEY, body.agentId);
+          const current = computeAgentCredits(stored, fallback);
+          await hsetField(AGENT_CREDITS_KEY, body.agentId, { credits: amount, lastRegenAt: current.lastRegenAt });
+          res.status(200).json({ ok: true, credits: amount });
+          return;
+        }
+        res.status(400).json({ error: "Invalid target" });
+        return;
+      }
+
       res.status(400).json({ error: "Invalid body" });
       return;
     }
