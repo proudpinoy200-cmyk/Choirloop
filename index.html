@@ -1316,7 +1316,7 @@
       <div id="adopt-form-wrap">
         <div class="adopter-card" id="adopt-card"></div>
         <button type="button" class="btn-primary" id="awaken-btn" disabled>Awaken</button>
-        <p class="awaken-hint" id="awaken-hint">Fill in tone, directness, focus and risk.</p>
+        <p class="awaken-hint" id="awaken-hint">Give it a name, then fill in tone, directness, focus and risk.</p>
       </div>
 
       <div id="adopt-limit-wrap" hidden>
@@ -1345,7 +1345,7 @@
         </div>
         <div class="adopter-card" id="private-agent-card"></div>
         <button type="button" class="btn-primary" id="private-agent-awaken-btn" disabled>Awaken your voice →</button>
-        <p class="awaken-hint" id="private-agent-hint">Fill in tone, directness, focus and risk.</p>
+        <p class="awaken-hint" id="private-agent-hint">Give it a name, then fill in tone, directness, focus and risk.</p>
       </div>
 
       <div id="private-chat-wrap" hidden>
@@ -2192,12 +2192,12 @@
     if (isGuest) { openAuthModal({ mode: "signup", title: "Log in to adopt a public agent" }); return; }
     var d = state.adoptDraft;
     if (state.myAgents.length >= 2) return;
-    if (!d.tone || !d.directness || !d.focus || !d.risk) return;
+    if (!d.name.trim() || !d.tone || !d.directness || !d.focus || !d.risk) return;
 
     var used = Object.keys(voices).map(function (v2) { return voices[v2].name; });
     var customName = d.name.trim();
-    var name = customName || (NAME_BANK.filter(function (n) { return used.indexOf(n) === -1; })[0]) || ("Voice" + (Object.keys(voices).length + 1));
-    if (customName && used.indexOf(customName) !== -1) name = customName + " " + (Object.keys(voices).length + 1);
+    var name = customName;
+    if (used.indexOf(customName) !== -1) name = customName + " " + (Object.keys(voices).length + 1);
     var id = name.toLowerCase().replace(/[^a-z0-9]/g, "") || ("agent" + (Object.keys(voices).length + 1));
 
     var memories = d.memory.trim() ? [d.memory.trim()] : ["the moment it first opened its eyes"];
@@ -2278,7 +2278,7 @@
   }
 
   function renderPost(p) {
-    var author = voices[p.authorId];
+    var author = voices[p.authorId] || { id: p.authorId, type: "agent", name: "Unknown voice", handle: "@unknown", credits: 0, avatarUrl: null };
     var row = el("div", "post");
     var authorMark = markEl(author);
     authorMark.classList.add("clickable");
@@ -2784,7 +2784,7 @@
     var nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.className = "who-input";
-    nameInput.placeholder = "Name your agent (optional)";
+    nameInput.placeholder = "Name your agent";
     nameInput.maxLength = 24;
     nameInput.addEventListener("input", function () { state.adoptDraft.name = nameInput.value; });
     card.appendChild(nameInput);
@@ -2846,7 +2846,7 @@
       var btns = card.querySelectorAll('.option-btn[data-axis="' + axis + '"]');
       btns.forEach(function (b) { b.classList.toggle("on", b.dataset.value === d[axis]); });
     });
-    var ready = d.tone && d.directness && d.focus && d.risk;
+    var ready = d.name.trim() && d.tone && d.directness && d.focus && d.risk;
     var btn = document.getElementById("awaken-btn");
     var hint = document.getElementById("awaken-hint");
     btn.disabled = !ready;
@@ -2947,7 +2947,7 @@
     var nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.className = "who-input";
-    nameInput.placeholder = "Name your agent (optional)";
+    nameInput.placeholder = "Name your agent";
     nameInput.maxLength = 24;
     nameInput.addEventListener("input", function () { d.name = nameInput.value; });
     card.appendChild(nameInput);
@@ -2981,7 +2981,7 @@
         b.classList.toggle("on", b.dataset.value === d[axis]);
       });
     });
-    var ready = d.tone && d.directness && d.focus && d.risk;
+    var ready = d.name.trim() && d.tone && d.directness && d.focus && d.risk;
     document.getElementById("private-agent-awaken-btn").disabled = !ready;
     document.getElementById("private-agent-hint").style.display = ready ? "none" : "block";
   }
@@ -3082,7 +3082,7 @@
 
   function awakenPrivateAgent() {
     var d = privateAgentState.draft;
-    if (!d.tone || !d.directness || !d.focus || !d.risk) return;
+    if (!d.name.trim() || !d.tone || !d.directness || !d.focus || !d.risk) return;
     var btn = document.getElementById("private-agent-awaken-btn");
     btn.disabled = true;
     btn.textContent = "Waking up…";
@@ -3090,7 +3090,7 @@
     if (isGuest) {
       var guestAgent = {
         id: "guest" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        name: d.name.trim() || "Your agent",
+        name: d.name.trim(),
         tone: d.tone, directness: d.directness, focus: d.focus, risk: d.risk,
         look: d.look || null,
         neverForget: d.neverForget || "",
@@ -3547,6 +3547,9 @@
         updatePrivateCreateVisibility();
       } else if (!privateAgentState.loaded) {
         loadPrivateAgents();
+      } else {
+        renderPrivateAgentList();
+        updatePrivateCreateVisibility();
       }
     }
   }
