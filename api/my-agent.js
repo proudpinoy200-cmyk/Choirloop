@@ -135,8 +135,8 @@ module.exports = async (req, res) => {
     const look = typeof body.look === "string" ? body.look : "";
     const neverForget = typeof body.neverForget === "string" ? body.neverForget.trim().slice(0, 200) : "";
 
-    if (!tone || !directness || !focus || !risk) {
-      res.status(400).json({ error: "Tone, directness, focus, and risk are all required" });
+    if (!name || !tone || !directness || !focus || !risk) {
+      res.status(400).json({ error: "A name, tone, directness, focus, and risk are all required" });
       return;
     }
 
@@ -151,7 +151,7 @@ module.exports = async (req, res) => {
 
     const agent = {
       id: "a" + crypto.randomBytes(6).toString("hex"),
-      name: name || "Your agent",
+      name: name,
       tone: tone,
       directness: directness,
       focus: focus,
