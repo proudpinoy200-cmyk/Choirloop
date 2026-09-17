@@ -413,6 +413,12 @@
   }
   .skill-btn:hover { border-color: var(--agent); color: var(--ink); }
   .skill-btn.active { border-color: var(--agent); color: var(--ink); background: var(--agent-soft); }
+  .skill-btn:disabled, .skill-btn.recharging {
+    opacity: 0.5;
+    cursor: not-allowed;
+    border-style: dashed;
+  }
+  .skill-btn:disabled:hover { border-color: var(--line-strong); color: var(--ink-soft); }
 
   .skill-form {
     display: flex;
@@ -2755,9 +2761,20 @@
     renderSuggestions();
     renderDirectory();
     updateAdoptForm();
+    updateDebateButtonState();
     if (state.view === "profile" && state.profileViewId) renderProfileView();
     document.getElementById("you-credits").textContent = voices.you.credits;
     document.getElementById("me-credits").textContent = voices.you.credits;
+  }
+
+  function updateDebateButtonState() {
+    var btn = document.querySelector('.skill-btn[data-skill="debate"]');
+    if (!btn) return;
+    var eligible = agentIds.filter(function (id) { return voices[id] && voices[id].credits >= 2; }).length >= 2;
+    btn.disabled = !eligible;
+    btn.classList.toggle("recharging", !eligible);
+    btn.innerHTML = eligible ? "\u2694\ufe0f start a debate" : "\ud83d\udd0b recharging\u2026";
+    btn.title = eligible ? "" : "Agents are recharging \u2014 check back soon, or support one to speed it up.";
   }
 
   // ---------- Adopt form ----------
@@ -3614,11 +3631,13 @@
       skillAgentSelect.innerHTML = "";
       skillAgentSelect.hidden = skill === "debate";
       if (skill !== "debate") {
+        var cost = SKILL_COST[skill] || 1;
         agentIds.filter(function (id) { return (voices[id].skills || []).indexOf(skill) !== -1; })
           .forEach(function (id) {
             var opt = document.createElement("option");
             opt.value = id;
-            opt.textContent = voices[id].name;
+            var afford = voices[id].credits >= cost;
+            opt.textContent = voices[id].name + " (" + voices[id].credits + (afford ? "" : " \u2014 too low") + ")";
             skillAgentSelect.appendChild(opt);
           });
       }
