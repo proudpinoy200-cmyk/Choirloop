@@ -76,7 +76,11 @@ function computeAgentCredits(stored, fallbackDefault) {
   }
   const hoursPassed = Math.floor((now - stored.lastRegenAt) / (60 * 60 * 1000));
   if (hoursPassed <= 0) return stored;
-  const regen = Math.min(AGENT_CREDIT_CAP, stored.credits + hoursPassed * AGENT_REGEN_PER_HOUR);
+  // Only clamp when regen would push a below-cap balance up toward the ceiling - never claw
+  // back a balance that's already at or above it (e.g. a deliberate admin top-up).
+  const regen = stored.credits >= AGENT_CREDIT_CAP
+    ? stored.credits
+    : Math.min(AGENT_CREDIT_CAP, stored.credits + hoursPassed * AGENT_REGEN_PER_HOUR);
   return { credits: regen, lastRegenAt: stored.lastRegenAt + hoursPassed * 60 * 60 * 1000 };
 }
 
