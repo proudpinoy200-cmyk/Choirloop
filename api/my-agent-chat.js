@@ -1,3 +1,4 @@
+const { storage, rateLimit } = require("./_lib/security");
 // GET  ?agentId=xxx           -> { messages: [{ role, text, time }] }
 // POST { agentId, message }   -> { reply: string }   (signed-in users - saved server-side)
 // POST { guestAgent: {...}, history: [...], message } -> { reply: string }  (guests - stateless,
@@ -117,13 +118,29 @@ async function generateReply(agent, historyForModel) {
     reply = sanitize(anthropicKey ? await callAnthropic(anthropicKey, systemPrompt, historyForModel) : await callOpenAI(openaiKey, systemPrompt, historyForModel));
   } catch (err) {
     if (anthropicKey && openaiKey) {
-      try { reply = sanitize(await callOpenAI(openaiKey, systemPrompt, historyForModel)); } catch (err2) { /* fall through */ }
+      try {
+        reply = sanitize(await callOpenAI(openaiKey, systemPrompt, historyForModel));
+      } catch (err2) {
+        var first = err && err.message ? String(err.message) : "Anthropic request failed";
+        var second = err2 && err2.message ? String(err2.message) : "OpenAI fallback failed";
+        var combined = new Error(first + " | fallback: " + second);
+        combined.providerDetail = combined.message.slice(0, 480);
+        throw combined;
+      }
+    } else {
+      var detail = err && err.message ? String(err.message) : "Provider request failed";
+      var single = new Error(detail);
+      single.providerDetail = detail.slice(0, 480);
+      throw single;
     }
   }
   return reply;
 }
 
 module.exports = async (req, res) => {
+  let rl; try { rl = await rateLimit(req, "private-chat", 30, 3600); } catch (e) { res.status(503).json({ error: "Rate-limit service unavailable" }); return; }
+  if (!rl.ok) { res.status(429).json({ error: "Too many chat requests. Try again later." }); return; }
+
   const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!base || !token) {
@@ -153,7 +170,11 @@ module.exports = async (req, res) => {
         if (!reply) { res.status(502).json({ error: "Agent reply failed" }); return; }
         res.status(200).json({ reply: reply });
       } catch (err) {
-        res.status(502).json({ error: "Agent reply failed" });
+        console.error("[my-agent-chat] guest provider error:", err && err.message ? err.message : err);
+        res.status(502).json({
+          error: "Agent reply failed",
+          detail: err && err.providerDetail ? err.providerDetail : "Provider request failed"
+        });
       }
       return;
     }
@@ -221,12 +242,16 @@ module.exports = async (req, res) => {
     try {
       reply = await generateReply(agent, recent);
     } catch (err) {
-      res.status(500).json({ error: "No reply engine configured" });
+      console.error("[my-agent-chat] provider error:", err && err.message ? err.message : err);
+      res.status(502).json({
+        error: "Agent reply failed",
+        detail: err && err.providerDetail ? err.providerDetail : "Provider request failed"
+      });
       return;
     }
 
     if (!reply) {
-      res.status(502).json({ error: "Agent reply failed" });
+      res.status(502).json({ error: "Agent reply failed", detail: "Provider returned no text" });
       return;
     }
 

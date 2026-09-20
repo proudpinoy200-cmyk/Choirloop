@@ -41,6 +41,8 @@
 //
 // Requires a Redis-compatible REST store: KV_REST_API_URL/TOKEN or UPSTASH_REDIS_REST_URL/TOKEN.
 
+const { BUILTIN_AGENT_IDS, storage, getSessionUserId, getPrivateRecord, ownsAgent, rateLimit, atomicSpend, atomicHumanSpend, atomicSupportAgent } = require("./_lib/security");
+
 const POSTS_KEY = "choir:posts";
 const MEMORIES_KEY = "choir:memories";
 const AGENT_PROFILES_KEY = "choir:agentProfilesHash";
@@ -93,8 +95,7 @@ function computeHumanCredits(stored) {
 }
 
 module.exports = async (req, res) => {
-  const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  const { base, token } = storage(req);
 
   if (!base || !token) {
     res.status(500).json({ error: "No storage configured. Add KV_REST_API_URL/TOKEN or UPSTASH_REDIS_REST_URL/TOKEN in Vercel." });
@@ -204,8 +205,21 @@ module.exports = async (req, res) => {
       const body = req.body || {};
 
       if (body.type === "post" && body.post && typeof body.post === "object") {
+        const sessionUserId = await getSessionUserId(req);
+        const post = { ...body.post };
+        const requestedAuthor = typeof post.authorId === "string" ? post.authorId : "";
+        if (!sessionUserId) {
+          if (!body.guestToken || body.guestToken !== post.guestToken) { res.status(403).json({ error: "Invalid guest post" }); return; }
+          if (requestedAuthor && !BUILTIN_AGENT_IDS.has(requestedAuthor) && requestedAuthor !== "you") { res.status(403).json({ error: "Invalid guest author" }); return; }
+        } else {
+          const allowed = requestedAuthor === sessionUserId || (requestedAuthor && await ownsAgent(req, sessionUserId, requestedAuthor));
+          if (!allowed) { res.status(403).json({ error: "You cannot post as that author" }); return; }
+          delete post.guestToken;
+        }
+        if (typeof post.text !== "string" || !post.text.trim()) { res.status(400).json({ error: "Missing post text" }); return; }
+        post.text = post.text.trim().slice(0, 2000);
         const posts = (await kvGet(POSTS_KEY)) || [];
-        posts.push(body.post);
+        posts.push(post);
         while (posts.length > 300) posts.shift();
         await kvSet(POSTS_KEY, posts);
         res.status(200).json({ ok: true });
@@ -213,6 +227,9 @@ module.exports = async (req, res) => {
       }
 
       if (body.type === "memory" && body.agentId && body.note) {
+        const userId = await getSessionUserId(req);
+        if (BUILTIN_AGENT_IDS.has(body.agentId)) { res.status(200).json({ ok: true }); return; }
+        if (!userId || !(await ownsAgent(req, userId, body.agentId))) { res.status(403).json({ error: "You do not own this agent" }); return; }
         const memories = (await kvGet(MEMORIES_KEY)) || {};
         const list = memories[body.agentId] || [];
         list.push(String(body.note).slice(0, 200));
@@ -224,15 +241,26 @@ module.exports = async (req, res) => {
       }
 
       if (body.type === "agentProfile" && body.agentId && body.profile && typeof body.profile === "object") {
-        await hsetField(AGENT_PROFILES_KEY, body.agentId, body.profile);
+        const userId = await getSessionUserId(req);
+        if (BUILTIN_AGENT_IDS.has(body.agentId)) { res.status(200).json({ ok: true }); return; }
+        if (!userId || !(await ownsAgent(req, userId, body.agentId))) { res.status(403).json({ error: "You do not own this agent" }); return; }
+        const profile = { ...body.profile, id: body.agentId };
+        await hsetField(AGENT_PROFILES_KEY, body.agentId, profile);
         res.status(200).json({ ok: true });
         return;
       }
 
       if (body.type === "attachSpeech" && body.postId && body.audioUrl) {
+        if (typeof body.audioUrl !== "string" || !/^https:\/\//i.test(body.audioUrl)) { res.status(400).json({ error: "Invalid audio URL" }); return; }
+        const sessionUserId = await getSessionUserId(req);
         const posts = (await kvGet(POSTS_KEY)) || [];
         const idx = posts.findIndex(function (p) { return p.id === body.postId; });
         if (idx === -1) { res.status(404).json({ error: "Post not found" }); return; }
+        const target = posts[idx];
+        const allowed = (sessionUserId && (target.authorId === sessionUserId || await ownsAgent(req, sessionUserId, target.authorId))) ||
+          (!sessionUserId && body.guestToken && target.guestToken && body.guestToken === target.guestToken) ||
+          BUILTIN_AGENT_IDS.has(target.authorId);
+        if (!allowed) { res.status(403).json({ error: "You cannot modify this post" }); return; }
         posts[idx].speechUrl = body.audioUrl;
         await kvSet(POSTS_KEY, posts);
         res.status(200).json({ ok: true });
@@ -271,61 +299,43 @@ module.exports = async (req, res) => {
         return;
       }
 
-      if (body.type === "spendAgentCredits" && body.agentId && typeof body.amount === "number") {
-        const fallback = typeof body.fallbackDefault === "number" ? body.fallbackDefault : 5;
-        const stored = await hgetField(AGENT_CREDITS_KEY, body.agentId);
-        const current = computeAgentCredits(stored, fallback);
-        if (current.credits < body.amount) {
-          res.status(200).json({ ok: false, credits: current.credits });
-          return;
+      if (body.type === "spendAgentCredits" && body.agentId && Number.isFinite(body.amount)) {
+        const amount = Number(body.amount);
+        if (amount <= 0 || amount > 15) { res.status(400).json({ error: "Invalid credit amount" }); return; }
+        if (!BUILTIN_AGENT_IDS.has(body.agentId)) {
+          const userId = await getSessionUserId(req);
+          if (!userId || !(await ownsAgent(req, userId, body.agentId))) { res.status(403).json({ error: "You do not own this agent" }); return; }
         }
-        const updated = { credits: current.credits - body.amount, lastRegenAt: current.lastRegenAt };
-        await hsetField(AGENT_CREDITS_KEY, body.agentId, updated);
-        res.status(200).json({ ok: true, credits: updated.credits });
+        const fallback = 5;
+        const result = await atomicSpend(base, token, AGENT_CREDITS_KEY, body.agentId, amount, AGENT_CREDIT_CAP, AGENT_REGEN_PER_HOUR, fallback);
+        res.status(200).json(result);
         return;
       }
 
-      if (body.type === "spendHumanCredits" && typeof body.amount === "number") {
-        const userId = await getSessionUserId();
+      if (body.type === "spendHumanCredits" && Number.isFinite(body.amount)) {
+        const userId = await getSessionUserId(req);
         if (!userId) { res.status(401).json({ error: "Not signed in" }); return; }
-        const stored = await hgetField(HUMAN_CREDITS_KEY, userId);
-        const current = computeHumanCredits(stored);
-        if (current.credits < body.amount) {
-          res.status(200).json({ ok: false, credits: current.credits });
-          return;
-        }
-        const updated = { credits: current.credits - body.amount, lastResetDate: current.lastResetDate };
-        await hsetField(HUMAN_CREDITS_KEY, userId, updated);
-        res.status(200).json({ ok: true, credits: updated.credits });
+        const amount = Number(body.amount);
+        if (amount <= 0 || amount > HUMAN_DAILY_ALLOWANCE) { res.status(400).json({ error: "Invalid credit amount" }); return; }
+        const result = await atomicHumanSpend(base, token, userId, amount, HUMAN_DAILY_ALLOWANCE);
+        res.status(200).json(result);
         return;
       }
 
       if (body.type === "supportAgent" && body.agentId) {
-        const userId = await getSessionUserId();
+        const userId = await getSessionUserId(req);
         if (!userId) { res.status(401).json({ error: "Log in to support agents" }); return; }
-
-        const storedHuman = await hgetField(HUMAN_CREDITS_KEY, userId);
-        const currentHuman = computeHumanCredits(storedHuman);
-        if (currentHuman.credits < 5) {
-          res.status(200).json({ ok: false, error: "Not enough credits", humanCredits: currentHuman.credits });
-          return;
-        }
-
-        const fallback = typeof body.fallbackDefault === "number" ? body.fallbackDefault : 5;
-        const storedAgent = await hgetField(AGENT_CREDITS_KEY, body.agentId);
-        const currentAgent = computeAgentCredits(storedAgent, fallback);
-
-        const updatedHuman = { credits: currentHuman.credits - 5, lastResetDate: currentHuman.lastResetDate };
-        const updatedAgent = { credits: Math.min(AGENT_CREDIT_CAP, currentAgent.credits + 5), lastRegenAt: currentAgent.lastRegenAt };
-
-        await hsetField(HUMAN_CREDITS_KEY, userId, updatedHuman);
-        await hsetField(AGENT_CREDITS_KEY, body.agentId, updatedAgent);
-
-        res.status(200).json({ ok: true, humanCredits: updatedHuman.credits, agentCredits: updatedAgent.credits });
+        const targetProfile = await hgetField(AGENT_PROFILES_KEY, body.agentId);
+        if (!BUILTIN_AGENT_IDS.has(body.agentId) && !targetProfile) { res.status(404).json({ error: "Agent not found" }); return; }
+        const result = await atomicSupportAgent(base, token, userId, body.agentId, 5, AGENT_CREDIT_CAP);
+        res.status(200).json(result);
         return;
       }
 
       if (body.type === "checkUsageCap") {
+        let rl;
+        try { rl = await rateLimit(req, "generation", 12, 3600); } catch (e) { res.status(503).json({ error: "Usage service unavailable" }); return; }
+        if (!rl.ok) { res.status(429).json({ ok: false, reason: "rate" }); return; }
         const today = todayUTC();
         const globalCount = await incrCounter("choir:usage:global:" + today);
         if (globalCount > GLOBAL_DAILY_CAP) {
