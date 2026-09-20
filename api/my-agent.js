@@ -12,7 +12,7 @@
 // public data in api/state.js. Nobody but this user can read or write it.
 
 const crypto = require("crypto");
-const { storage, getSessionUserId } = require("./_lib/security");
+const { storage, getSessionUserId, rateLimit } = require("./_lib/security");
 
 function parseCookies(header) {
   const out = {};
@@ -77,6 +77,8 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === "POST") {
+    let rl; try { rl = await rateLimit(req, "agent-management", 10, 3600); } catch (e) { res.status(503).json({ error: "Rate-limit service unavailable" }); return; }
+    if (!rl.ok) { res.status(429).json({ error: "Too many agent-management requests. Try again later." }); return; }
     const body = req.body || {};
 
     if (body.action === "setAvatar") {
