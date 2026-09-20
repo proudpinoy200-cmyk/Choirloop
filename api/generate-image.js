@@ -1,3 +1,4 @@
+const { storage, rateLimit } = require("./_lib/security");
 // POST { prompt: string, agent?: { name, tone, directness, focus, risk, traits } }
 // -> { image: "https://...public blob url.../xyz.png" }
 //
@@ -17,7 +18,7 @@ const { put } = require("@vercel/blob");
 async function checkUsageCap(reqHeaders) {
   const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!base || !token) return { ok: true };
+  if (!base || !token) return { ok: false, reason: "Usage service unavailable. Try again later." };
 
   const GLOBAL_DAILY_CAP = 300;
   const USER_DAILY_CAP = 3;
@@ -62,8 +63,8 @@ async function checkUsageCap(reqHeaders) {
     }
     return { ok: true };
   } catch (e) {
-    console.error("Usage cap check failed, allowing through", e && e.message);
-    return { ok: true };
+    console.error("Usage cap check failed", e && e.message);
+    return { ok: false, reason: "Usage service unavailable. Try again later." };
   }
 }
 
