@@ -63,6 +63,41 @@ module.exports = async (req, res) => {
   const store = kv(base, token);
 
   const userId = await getUserId(store, req);
+
+  // Guests are allowed to create a public voice by design. The voice is
+  // server-assigned an ID but is not persisted into a private ownership record.
+  // Rate-limit guest creation separately so the anonymous path cannot be abused.
+  if (req.method === "POST" && !userId) {
+    const body = req.body || {};
+    if (body.action === "createPublicAgent") {
+      let guestRl;
+      try { guestRl = await rateLimit(req, "guest-public-agent", 3, 3600); }
+      catch (e) { res.status(503).json({ error: "Rate-limit service unavailable" }); return; }
+      if (!guestRl.ok) { res.status(429).json({ error: "Too many guest agent creations. Try again later." }); return; }
+
+      const name = typeof body.name === "string" ? body.name.trim().slice(0, 24) : "";
+      const tone = typeof body.tone === "string" ? body.tone.trim().slice(0, 40) : "";
+      const directness = typeof body.directness === "string" ? body.directness.trim().slice(0, 40) : "";
+      const focus = typeof body.focus === "string" ? body.focus.trim().slice(0, 80) : "";
+      const risk = typeof body.risk === "string" ? body.risk.trim().slice(0, 40) : "";
+      const look = typeof body.look === "string" ? body.look.trim().slice(0, 80) : "";
+      const neverForget = typeof body.neverForget === "string" ? body.neverForget.trim().slice(0, 200) : "";
+      if (!name || !tone || !directness || !focus || !risk) {
+        res.status(400).json({ error: "A name, tone, directness, focus, and risk are required" });
+        return;
+      }
+
+      const agent = {
+        id: "p" + crypto.randomBytes(8).toString("hex"),
+        name, tone, directness, focus, risk, look: look || null,
+        neverForget, memories: neverForget ? [neverForget] : [],
+        createdAt: Date.now()
+      };
+      res.status(200).json({ agent, myPublicAgents: [] });
+      return;
+    }
+  }
+
   if (!userId) {
     res.status(401).json({ error: "Not signed in" });
     return;
