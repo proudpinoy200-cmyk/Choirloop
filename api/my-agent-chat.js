@@ -1,3 +1,4 @@
+const { storage, rateLimit } = require("./_lib/security");
 // GET  ?agentId=xxx           -> { messages: [{ role, text, time }] }
 // POST { agentId, message }   -> { reply: string }   (signed-in users - saved server-side)
 // POST { guestAgent: {...}, history: [...], message } -> { reply: string }  (guests - stateless,
@@ -124,6 +125,9 @@ async function generateReply(agent, historyForModel) {
 }
 
 module.exports = async (req, res) => {
+  let rl; try { rl = await rateLimit(req, "private-chat", 30, 3600); } catch (e) { res.status(503).json({ error: "Rate-limit service unavailable" }); return; }
+  if (!rl.ok) { res.status(429).json({ error: "Too many chat requests. Try again later." }); return; }
+
   const base = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!base || !token) {
