@@ -83,6 +83,7 @@ async function callAnthropic(key, systemPrompt, history) {
       max_tokens: 400,
       system: systemPrompt,
       messages: history,
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 2 }]
     })
   });
   var data = await r.json();
@@ -96,18 +97,14 @@ async function callOpenAI(key, systemPrompt, history) {
   var messages = [{ role: "system", content: systemPrompt }].concat(
     history.map(function (m) { return { role: m.role === "assistant" ? "assistant" : "user", content: m.content }; })
   );
-  var r = await fetch("https://api.openai.com/v1/responses", {
+  var r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
-    body: JSON.stringify({ model: "gpt-5.6-luna", max_output_tokens: 300, input: messages })
+    body: JSON.stringify({ model: "gpt-5.4-mini", max_completion_tokens: 300, messages: messages })
   });
   var data = await r.json();
   if (!r.ok) throw new Error((data && data.error && data.error.message) || "OpenAI request failed");
-  if (data.output_text) return data.output_text;
-  var output = Array.isArray(data.output) ? data.output : [];
-  return output.flatMap(function (item) { return Array.isArray(item.content) ? item.content : []; })
-    .filter(function (part) { return part.type === "output_text" && part.text; })
-    .map(function (part) { return part.text; }).join(" ").trim();
+  return data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
 }
 
 async function generateReply(agent, historyForModel) {
@@ -124,13 +121,18 @@ async function generateReply(agent, historyForModel) {
       try {
         reply = sanitize(await callOpenAI(openaiKey, systemPrompt, historyForModel));
       } catch (err2) {
-        err.providerFallback = err2 && err2.message ? String(err2.message) : "OpenAI fallback failed";
+        var first = err && err.message ? String(err.message) : "Anthropic request failed";
+        var second = err2 && err2.message ? String(err2.message) : "OpenAI fallback failed";
+        var combined = new Error(first + " | fallback: " + second);
+        combined.providerDetail = combined.message.slice(0, 480);
+        throw combined;
       }
+    } else {
+      var detail = err && err.message ? String(err.message) : "Provider request failed";
+      var single = new Error(detail);
+      single.providerDetail = detail.slice(0, 480);
+      throw single;
     }
-    var detail = err && err.message ? String(err.message).slice(0, 240) : "Provider request failed";
-    var wrapped = new Error(detail);
-    wrapped.providerDetail = detail;
-    throw wrapped;
   }
   return reply;
 }
