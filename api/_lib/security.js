@@ -91,4 +91,48 @@ return {1,credits}`;
   return { ok: Number(result[0]) === 1, credits: Number(result[1]) };
 }
 
-module.exports = { BUILTIN_AGENT_IDS, storage, getJson, getSessionUserId, getPrivateRecord, ownsAgent, rateLimit, atomicSpend };
+async function atomicHumanSpend(base, token, userId, amount, allowance) {
+  const key = "choir:humanCredits";
+  const script = `local raw=redis.call('HGET',KEYS[1],ARGV[1])
+local today=ARGV[2]
+local amount=tonumber(ARGV[3])
+local allowance=tonumber(ARGV[4])
+local credits=allowance
+if raw then
+  local ok,obj=pcall(cjson.decode,raw)
+  if ok and obj.lastResetDate==today then credits=tonumber(obj.credits) or allowance end
+end
+if credits<amount then return {0,credits} end
+credits=credits-amount
+redis.call('HSET',KEYS[1],ARGV[1],cjson.encode({credits=credits,lastResetDate=today}))
+return {1,credits}`;
+  const body = JSON.stringify([script,1,key,userId,new Date().toISOString().slice(0,10),String(amount),String(allowance)]);
+  const r=await fetch(base+"/eval",{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body});
+  if(!r.ok) throw new Error("Atomic human credit operation failed");
+  const d=await r.json(), result=d.result||[0,allowance];
+  return {ok:Number(result[0])===1,credits:Number(result[1])};
+}
+
+async function atomicSupportAgent(base, token, userId, agentId, agentFallback, agentCap) {
+  const script=`local hraw=redis.call('HGET',KEYS[1],ARGV[1])
+local araw=redis.call('HGET',KEYS[2],ARGV[2])
+local today=ARGV[3]
+local cap=tonumber(ARGV[4])
+local h=20
+if hraw then local ok,o=pcall(cjson.decode,hraw); if ok and o.lastResetDate==today then h=tonumber(o.credits) or 20 end end
+if h<5 then return {0,h,0} end
+local a=tonumber(ARGV[5])
+local last=tonumber(ARGV[6])
+if araw then local ok,o=pcall(cjson.decode,araw); if ok and o.credits then a=tonumber(o.credits); last=tonumber(o.lastRegenAt) or last end end
+a=math.min(cap,a+5)
+redis.call('HSET',KEYS[1],ARGV[1],cjson.encode({credits=h-5,lastResetDate=today}))
+redis.call('HSET',KEYS[2],ARGV[2],cjson.encode({credits=a,lastRegenAt=last}))
+return {1,h-5,a}`;
+  const body=JSON.stringify([script,2,"choir:humanCredits","choir:agentCredits",userId,agentId,new Date().toISOString().slice(0,10),String(agentCap),String(agentFallback),String(Date.now())]);
+  const r=await fetch(base+"/eval",{method:"POST",headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body});
+  if(!r.ok) throw new Error("Atomic support operation failed");
+  const d=await r.json(), result=d.result||[0,0,0];
+  return {ok:Number(result[0])===1,humanCredits:Number(result[1]),agentCredits:Number(result[2])};
+}
+
+module.exports = { BUILTIN_AGENT_IDS, storage, getJson, getSessionUserId, getPrivateRecord, ownsAgent, rateLimit, atomicSpend, atomicHumanSpend, atomicSupportAgent };
