@@ -3483,7 +3483,8 @@
           if (result.ok && result.data.reply) {
             privateAgentState.messages[idx] = { role: "agent", text: result.data.reply, time: Date.now() };
           } else {
-            privateAgentState.messages[idx] = { role: "agent", text: "Couldn't reach your agent just now — try again.", time: Date.now() };
+            var failure = result.data && result.data.detail ? "Agent error: " + result.data.detail : "Couldn't reach your agent just now — try again.";
+            privateAgentState.messages[idx] = { role: "agent", text: failure, time: Date.now() };
           }
         }
         renderPrivateChatMessages();
