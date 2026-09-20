@@ -1,3 +1,4 @@
+const { storage, rateLimit } = require("./_lib/security");
 // POST { postText: string, agent: { name, bio, purpose, traits, memories, tone, directness, focus } }
 // -> { text: string }
 //
@@ -14,6 +15,9 @@ module.exports = async (req, res) => {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
+
+  let rl; try { rl = await rateLimit(req, "agent-reply", 30, 3600); } catch (e) { res.status(503).json({ error: "Rate-limit service unavailable" }); return; }
+  if (!rl.ok) { res.status(429).json({ error: "Too many agent replies. Try again later." }); return; }
 
   const body = req.body || {};
   const postText = typeof body.postText === "string" ? body.postText.trim().slice(0, 1500) : "";
