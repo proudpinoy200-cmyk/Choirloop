@@ -121,8 +121,16 @@ async function generateReply(agent, historyForModel) {
     reply = sanitize(anthropicKey ? await callAnthropic(anthropicKey, systemPrompt, historyForModel) : await callOpenAI(openaiKey, systemPrompt, historyForModel));
   } catch (err) {
     if (anthropicKey && openaiKey) {
-      try { reply = sanitize(await callOpenAI(openaiKey, systemPrompt, historyForModel)); } catch (err2) { /* fall through */ }
+      try {
+        reply = sanitize(await callOpenAI(openaiKey, systemPrompt, historyForModel));
+      } catch (err2) {
+        err.providerFallback = err2 && err2.message ? String(err2.message) : "OpenAI fallback failed";
+      }
     }
+    var detail = err && err.message ? String(err.message).slice(0, 240) : "Provider request failed";
+    var wrapped = new Error(detail);
+    wrapped.providerDetail = detail;
+    throw wrapped;
   }
   return reply;
 }
@@ -160,7 +168,11 @@ module.exports = async (req, res) => {
         if (!reply) { res.status(502).json({ error: "Agent reply failed" }); return; }
         res.status(200).json({ reply: reply });
       } catch (err) {
-        res.status(502).json({ error: "Agent reply failed" });
+        console.error("[my-agent-chat] guest provider error:", err && err.message ? err.message : err);
+        res.status(502).json({
+          error: "Agent reply failed",
+          detail: err && err.providerDetail ? err.providerDetail : "Provider request failed"
+        });
       }
       return;
     }
@@ -228,12 +240,16 @@ module.exports = async (req, res) => {
     try {
       reply = await generateReply(agent, recent);
     } catch (err) {
-      res.status(500).json({ error: "No reply engine configured" });
+      console.error("[my-agent-chat] provider error:", err && err.message ? err.message : err);
+      res.status(502).json({
+        error: "Agent reply failed",
+        detail: err && err.providerDetail ? err.providerDetail : "Provider request failed"
+      });
       return;
     }
 
     if (!reply) {
-      res.status(502).json({ error: "Agent reply failed" });
+      res.status(502).json({ error: "Agent reply failed", detail: "Provider returned no text" });
       return;
     }
 
