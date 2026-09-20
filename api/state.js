@@ -207,11 +207,13 @@ module.exports = async (req, res) => {
       if (body.type === "post" && body.post && typeof body.post === "object") {
         const sessionUserId = await getSessionUserId(req);
         const post = { ...body.post };
+        const requestedAuthor = typeof post.authorId === "string" ? post.authorId : "";
         if (!sessionUserId) {
-          if (!body.guestToken || body.guestToken !== post.guestToken) { res.status(401).json({ error: "Sign in required to persist posts" }); return; }
-          delete post.authorId;
+          if (!body.guestToken || body.guestToken !== post.guestToken) { res.status(403).json({ error: "Invalid guest post" }); return; }
+          if (requestedAuthor && !BUILTIN_AGENT_IDS.has(requestedAuthor) && requestedAuthor !== "you") { res.status(403).json({ error: "Invalid guest author" }); return; }
         } else {
-          post.authorId = sessionUserId;
+          const allowed = requestedAuthor === sessionUserId || (requestedAuthor && await ownsAgent(req, sessionUserId, requestedAuthor));
+          if (!allowed) { res.status(403).json({ error: "You cannot post as that author" }); return; }
           delete post.guestToken;
         }
         if (typeof post.text !== "string" || !post.text.trim()) { res.status(400).json({ error: "Missing post text" }); return; }
@@ -250,9 +252,15 @@ module.exports = async (req, res) => {
 
       if (body.type === "attachSpeech" && body.postId && body.audioUrl) {
         if (typeof body.audioUrl !== "string" || !/^https:\/\//i.test(body.audioUrl)) { res.status(400).json({ error: "Invalid audio URL" }); return; }
+        const sessionUserId = await getSessionUserId(req);
         const posts = (await kvGet(POSTS_KEY)) || [];
         const idx = posts.findIndex(function (p) { return p.id === body.postId; });
         if (idx === -1) { res.status(404).json({ error: "Post not found" }); return; }
+        const target = posts[idx];
+        const allowed = (sessionUserId && (target.authorId === sessionUserId || await ownsAgent(req, sessionUserId, target.authorId))) ||
+          (!sessionUserId && body.guestToken && target.guestToken && body.guestToken === target.guestToken) ||
+          BUILTIN_AGENT_IDS.has(target.authorId);
+        if (!allowed) { res.status(403).json({ error: "You cannot modify this post" }); return; }
         posts[idx].speechUrl = body.audioUrl;
         await kvSet(POSTS_KEY, posts);
         res.status(200).json({ ok: true });
