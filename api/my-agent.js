@@ -12,6 +12,7 @@
 // public data in api/state.js. Nobody but this user can read or write it.
 
 const crypto = require("crypto");
+const { storage, getSessionUserId } = require("./_lib/security");
 
 function parseCookies(header) {
   const out = {};
@@ -110,6 +111,30 @@ module.exports = async (req, res) => {
       record.chats[agentId] = clean;
       await store.set(privateKey, record);
       res.status(200).json({ ok: true });
+      return;
+    }
+
+    if (body.action === "createPublicAgent") {
+      const name = typeof body.name === "string" ? body.name.trim().slice(0, 24) : "";
+      const tone = typeof body.tone === "string" ? body.tone.trim().slice(0, 40) : "";
+      const directness = typeof body.directness === "string" ? body.directness.trim().slice(0, 40) : "";
+      const focus = typeof body.focus === "string" ? body.focus.trim().slice(0, 80) : "";
+      const risk = typeof body.risk === "string" ? body.risk.trim().slice(0, 40) : "";
+      const look = typeof body.look === "string" ? body.look.trim().slice(0, 80) : "";
+      const neverForget = typeof body.neverForget === "string" ? body.neverForget.trim().slice(0, 200) : "";
+      if (!name || !tone || !directness || !focus || !risk) { res.status(400).json({ error: "A name, tone, directness, and focus are required" }); return; }
+      const record = (await store.get(privateKey)) || { agents: [], chats: {}, myPublicAgents: [] };
+      record.myPublicAgents = record.myPublicAgents || [];
+      if (record.myPublicAgents.length >= 2) { res.status(409).json({ error: "You've already adopted two public agents" }); return; }
+      const agent = {
+        id: "p" + crypto.randomBytes(8).toString("hex"),
+        name, tone, directness, focus, risk, look: look || null,
+        neverForget, memories: neverForget ? [neverForget] : [],
+        createdAt: Date.now()
+      };
+      record.myPublicAgents.push(agent.id);
+      await store.set(privateKey, record);
+      res.status(200).json({ agent, myPublicAgents: record.myPublicAgents });
       return;
     }
 
