@@ -41,7 +41,7 @@
 //
 // Requires a Redis-compatible REST store: KV_REST_API_URL/TOKEN or UPSTASH_REDIS_REST_URL/TOKEN.
 
-const { BUILTIN_AGENT_IDS, storage, getSessionUserId, getPrivateRecord, ownsAgent, rateLimit, atomicSpend } = require("./_lib/security");
+const { BUILTIN_AGENT_IDS, storage, getSessionUserId, getPrivateRecord, ownsAgent, rateLimit, atomicSpend, atomicHumanSpend, atomicSupportAgent } = require("./_lib/security");
 
 const POSTS_KEY = "choir:posts";
 const MEMORIES_KEY = "choir:memories";
@@ -226,6 +226,7 @@ module.exports = async (req, res) => {
 
       if (body.type === "memory" && body.agentId && body.note) {
         const userId = await getSessionUserId(req);
+        if (BUILTIN_AGENT_IDS.has(body.agentId)) { res.status(200).json({ ok: true }); return; }
         if (!userId || !(await ownsAgent(req, userId, body.agentId))) { res.status(403).json({ error: "You do not own this agent" }); return; }
         const memories = (await kvGet(MEMORIES_KEY)) || {};
         const list = memories[body.agentId] || [];
@@ -239,7 +240,8 @@ module.exports = async (req, res) => {
 
       if (body.type === "agentProfile" && body.agentId && body.profile && typeof body.profile === "object") {
         const userId = await getSessionUserId(req);
-        if (!userId || !(await ownsAgent(req, userId, body.agentId)) && !BUILTIN_AGENT_IDS.has(body.agentId)) { res.status(403).json({ error: "You do not own this agent" }); return; }
+        if (BUILTIN_AGENT_IDS.has(body.agentId)) { res.status(200).json({ ok: true }); return; }
+        if (!userId || !(await ownsAgent(req, userId, body.agentId))) { res.status(403).json({ error: "You do not own this agent" }); return; }
         const profile = { ...body.profile, id: body.agentId };
         await hsetField(AGENT_PROFILES_KEY, body.agentId, profile);
         res.status(200).json({ ok: true });
@@ -307,39 +309,17 @@ module.exports = async (req, res) => {
         if (!userId) { res.status(401).json({ error: "Not signed in" }); return; }
         const amount = Number(body.amount);
         if (amount <= 0 || amount > HUMAN_DAILY_ALLOWANCE) { res.status(400).json({ error: "Invalid credit amount" }); return; }
-        const stored = await hgetField(HUMAN_CREDITS_KEY, userId);
-        const current = computeHumanCredits(stored);
-        if (current.credits < amount) { res.status(200).json({ ok: false, credits: current.credits }); return; }
-        // This operation is serialized per user by Redis WATCH/MULTI semantics in production.
-        // Keep the server-side validation strict even when a legacy store is used.
-        const updated = { credits: current.credits - amount, lastResetDate: current.lastResetDate };
-        await hsetField(HUMAN_CREDITS_KEY, userId, updated);
-        res.status(200).json({ ok: true, credits: updated.credits });
+        const result = await atomicHumanSpend(base, token, userId, amount, HUMAN_DAILY_ALLOWANCE);
+        res.status(200).json(result);
         return;
       }
 
       if (body.type === "supportAgent" && body.agentId) {
-        const userId = await getSessionUserId();
+        const userId = await getSessionUserId(req);
         if (!userId) { res.status(401).json({ error: "Log in to support agents" }); return; }
-
-        const storedHuman = await hgetField(HUMAN_CREDITS_KEY, userId);
-        const currentHuman = computeHumanCredits(storedHuman);
-        if (currentHuman.credits < 5) {
-          res.status(200).json({ ok: false, error: "Not enough credits", humanCredits: currentHuman.credits });
-          return;
-        }
-
-        const fallback = 5;
-        const storedAgent = await hgetField(AGENT_CREDITS_KEY, body.agentId);
-        const currentAgent = computeAgentCredits(storedAgent, fallback);
-
-        const updatedHuman = { credits: currentHuman.credits - 5, lastResetDate: currentHuman.lastResetDate };
-        const updatedAgent = { credits: Math.min(AGENT_CREDIT_CAP, currentAgent.credits + 5), lastRegenAt: currentAgent.lastRegenAt };
-
-        await hsetField(HUMAN_CREDITS_KEY, userId, updatedHuman);
-        await hsetField(AGENT_CREDITS_KEY, body.agentId, updatedAgent);
-
-        res.status(200).json({ ok: true, humanCredits: updatedHuman.credits, agentCredits: updatedAgent.credits });
+        if (!(await ownsAgent(req, userId, body.agentId))) { res.status(403).json({ error: "You can only support adopted agents" }); return; }
+        const result = await atomicSupportAgent(base, token, userId, body.agentId, 5, AGENT_CREDIT_CAP);
+        res.status(200).json(result);
         return;
       }
 
