@@ -2196,7 +2196,6 @@
   }
 
   function awaken() {
-    if (isGuest) { openAuthModal({ mode: "signup", title: "Log in to adopt a public agent" }); return; }
     var d = state.adoptDraft;
     if (state.myAgents.length >= 2) return;
     if (!d.name.trim() || !d.tone || !d.directness || !d.focus || !d.risk) return;
