@@ -325,7 +325,8 @@ module.exports = async (req, res) => {
       if (body.type === "supportAgent" && body.agentId) {
         const userId = await getSessionUserId(req);
         if (!userId) { res.status(401).json({ error: "Log in to support agents" }); return; }
-        if (!(await ownsAgent(req, userId, body.agentId))) { res.status(403).json({ error: "You can only support adopted agents" }); return; }
+        const targetProfile = await hgetField(AGENT_PROFILES_KEY, body.agentId);
+        if (!BUILTIN_AGENT_IDS.has(body.agentId) && !targetProfile) { res.status(404).json({ error: "Agent not found" }); return; }
         const result = await atomicSupportAgent(base, token, userId, body.agentId, 5, AGENT_CREDIT_CAP);
         res.status(200).json(result);
         return;
