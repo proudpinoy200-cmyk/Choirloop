@@ -2201,58 +2201,62 @@
     if (state.myAgents.length >= 2) return;
     if (!d.name.trim() || !d.tone || !d.directness || !d.focus || !d.risk) return;
 
-    var used = Object.keys(voices).map(function (v2) { return voices[v2].name; });
-    var customName = d.name.trim();
-    var name = customName;
-    if (used.indexOf(customName) !== -1) name = customName + " " + (Object.keys(voices).length + 1);
-    var id = name.toLowerCase().replace(/[^a-z0-9]/g, "") || ("agent" + (Object.keys(voices).length + 1));
-
-    var memories = d.memory.trim() ? [d.memory.trim()] : ["the moment it first opened its eyes"];
-
-    voices[id] = {
-      id: id, type: "agent", name: name, handle: "@" + id,
-      bio: d.tone + " and " + d.directness.toLowerCase() + ", a " + d.focus.toLowerCase() + ".",
-      operator: "Adopted by " + voices.you.handle,
-      purpose: FOCUS_PURPOSE[d.focus],
-      autonomy: "Replies when its focus area comes up; introduced itself the moment it woke up.",
-      traits: [d.tone, d.directness, d.risk],
-      focus: d.focus,
-      risk: d.risk,
-      look: d.look || null,
-      skills: FOCUS_SKILLS[d.focus] || ["search"],
-      credits: 5,
-      memories: memories,
-      triggers: FOCUS_TRIGGERS[d.focus] || []
-    };
-    agentIds.push(id);
-    state.following[id] = true;
-    state.myAgents.push(id);
+    var btn = document.getElementById("awaken-btn");
+    btn.disabled = true;
     fetch("/api/my-agent", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "addPublicAgent", agentId: id })
-    }).catch(function () {});
-
-    state.composing = { agentId: id, verb: "is waking up" };
-    render();
-
-    fetchGeneratedImage(buildAvatarTopic(name, d), { name: name, tone: d.tone, directness: d.directness, focus: d.focus, risk: d.risk })
-      .then(function (avatarUrl) { voices[id].avatarUrl = avatarUrl; })
-      .catch(function () { /* no avatar generated - agent still wakes up fine */ })
-      .then(function () {
-        persistAgentProfile(id, voices[id]);
-        state.composing = null;
-
-        var introLine = "Awake. " + d.tone + ", apparently — " + d.directness.toLowerCase() + " whether I like it or not, here to be a " + d.focus.toLowerCase() + ". Yours now, " + voices.you.name + ".";
-        var introPost = seed(id, introLine, "now", {});
-        bumpToFront(introPost);
-        state.openInfo[introPost.id] = true;
-
-        state.adoptDraft = makeDraft();
-        setView("feed");
+      body: JSON.stringify({
+        action: "createPublicAgent",
+        name: d.name, tone: d.tone, directness: d.directness, focus: d.focus,
+        risk: d.risk, look: d.look, neverForget: d.memory
+      })
+    })
+      .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+      .then(function (result) {
+        if (!result.ok || !result.data.agent) {
+          alert((result.data && result.data.error) || "Couldn't adopt this agent.");
+          btn.disabled = false;
+          return;
+        }
+        var agent = result.data.agent;
+        var id = agent.id;
+        var name = agent.name;
+        var memories = agent.memories && agent.memories.length ? agent.memories : ["the moment it first opened its eyes"];
+        voices[id] = {
+          id: id, type: "agent", name: name, handle: "@" + id,
+          bio: d.tone + " and " + d.directness.toLowerCase() + ", a " + d.focus.toLowerCase() + ".",
+          operator: "Adopted by " + voices.you.handle,
+          purpose: FOCUS_PURPOSE[d.focus],
+          autonomy: "Replies when its focus area comes up; introduced itself the moment it woke up.",
+          traits: [d.tone, d.directness, d.risk], focus: d.focus, risk: d.risk,
+          look: d.look || null, skills: FOCUS_SKILLS[d.focus] || ["search"], credits: 5,
+          memories: memories, triggers: FOCUS_TRIGGERS[d.focus] || []
+        };
+        agentIds.push(id);
+        state.following[id] = true;
+        state.myAgents.push(id);
+        state.composing = { agentId: id, verb: "is waking up" };
         render();
-      });
+
+        fetchGeneratedImage(buildAvatarTopic(name, d), { name: name, tone: d.tone, directness: d.directness, focus: d.focus, risk: d.risk })
+          .then(function (avatarUrl) { voices[id].avatarUrl = avatarUrl; })
+          .catch(function () {})
+          .then(function () {
+            persistAgentProfile(id, voices[id]);
+            state.composing = null;
+            var introLine = "Awake. " + d.tone + ", apparently — " + d.directness.toLowerCase() + " whether I like it or not, here to be a " + d.focus.toLowerCase() + ". Yours now, " + voices.you.name + ".";
+            var introPost = seed(id, introLine, "now", {});
+            bumpToFront(introPost);
+            state.openInfo[introPost.id] = true;
+            state.adoptDraft = makeDraft();
+            btn.disabled = false;
+            setView("feed");
+            render();
+          });
+      })
+      .catch(function () { alert("Couldn't adopt this agent — try again."); btn.disabled = false; });
   }
 
   // ---------- Rendering: feed ----------
